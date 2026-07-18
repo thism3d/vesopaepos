@@ -16,9 +16,6 @@ on:
     branches: [main]
   workflow_dispatch:
 
-env:
-  FLUTTER_VERSION: '3.41.5'
-
 jobs:
   build:
     runs-on: windows-latest
@@ -29,8 +26,10 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           # Pinned to the version this project is developed against, so CI does
-          # not start failing the day Flutter ships a breaking stable.
-          flutter-version: ${{ env.FLUTTER_VERSION }}
+          # not start failing the day Flutter ships a breaking stable. Written
+          # literally rather than through `env:`, which is not reliably
+          # available to `with:` at step level.
+          flutter-version: '3.41.5'
           channel: stable
           cache: true
 
