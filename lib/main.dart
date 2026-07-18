@@ -14,6 +14,7 @@ import 'data/session_repository.dart';
 import 'data/sync_service.dart';
 import 'data/table_repository.dart';
 import 'payments/dojo_config.dart';
+import 'payments/dojo_desktop.dart';
 import 'payments/dojo_native.dart';
 import 'payments/payment_provider.dart';
 import 'ui/shell.dart';
@@ -134,15 +135,31 @@ final dojoProvider = Provider<PaymentProvider?>((ref) {
     softwareHouseId: config.softwareHouseId.trim().isEmpty
         ? null
         : config.softwareHouseId.trim(),
+    resellerId: config.resellerId.trim().isEmpty
+        ? null
+        : config.resellerId.trim(),
   );
 
-  // On Android the card is presented through Dojo's native drop-in SDK (card
-  // entry + 3-D Secure). The native provider reuses `rest` for intent creation
-  // and falls back to it if the SDK is not bundled. Elsewhere REST is used
-  // directly.
+  // A card machine on the counter wins on every platform: if the venue has a
+  // reader, that is how the card should be taken, not by keying it into the
+  // screen. `rest` drives the terminal session directly.
+  if (rest.canUseTerminal) return rest;
+
+  // No reader. On Android the card is presented through Dojo's native drop-in
+  // SDK (card entry + 3-D Secure). The native provider reuses `rest` for intent
+  // creation and falls back to it if the SDK is not bundled.
   if (Platform.isAndroid) {
     return NativeDojoProvider(intents: rest, isSandbox: config.isSandboxKey);
   }
+
+  // Desktop tills (the Windows touch-screen EPOS) have no Dojo SDK, so the card
+  // is presented either by a physical reader or by Dojo's hosted checkout —
+  // see DesktopDojoProvider. Plain REST polling on its own presents no card at
+  // all, which is what left the till stuck on "Waiting for the card…".
+  if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+    return DesktopDojoProvider(intents: rest);
+  }
+
   return rest;
 });
 

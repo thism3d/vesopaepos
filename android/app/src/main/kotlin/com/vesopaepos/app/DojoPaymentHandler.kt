@@ -1,4 +1,4 @@
-package uk.co.vesopa.vesopa_epos
+package com.vesopaepos.app
 
 import android.app.Activity
 import android.content.Intent

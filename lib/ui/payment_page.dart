@@ -8,6 +8,8 @@ import 'package:printing/printing.dart';
 import '../data/local/database.dart';
 import '../data/receipt_repository.dart';
 import '../main.dart';
+import '../payments/dojo_desktop.dart';
+import '../payments/payment_provider.dart';
 import 'layout.dart';
 import 'receipt_pdf.dart';
 import 'receipts_page.dart' show receiptListProvider;
@@ -202,25 +204,83 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
 
     // The clerk needs to know the till is waiting on the customer, and must not
     // be able to press Card twice while it is.
+    //
+    // On desktop the provider reports what it is actually doing, and the wait
+    // can be abandoned: a card payment can sit unanswered for minutes, and a
+    // spinner with no message and no way out strands the till mid-service.
+    final desktop = dojo is DesktopDojoProvider ? dojo : null;
+    final stage = ValueNotifier<DojoStage>(DojoStage.creating);
+
+    // When the sale runs on a card machine, show what the reader is telling the
+    // customer ("present card", "enter PIN") rather than a generic wait — the
+    // clerk is the one who has to prompt them.
+    final prompt = ValueNotifier<String?>(null);
+    final rest = dojo is DojoProvider
+        ? dojo
+        : desktop?.intents;
+    rest?.onTerminalUpdate = (s) => prompt.value = s.prompt;
+
     unawaited(
       showDialog<void>(
         context: context,
         barrierDismissible: false,
-        builder: (_) => const AlertDialog(
+        builder: (dialogContext) => AlertDialog(
           content: Row(
             children: [
-              CircularProgressIndicator(),
-              SizedBox(width: 20),
-              Expanded(child: Text('Waiting for the card…')),
+              const CircularProgressIndicator(),
+              const SizedBox(width: 20),
+              Expanded(
+                // The reader's own prompt wins when there is one: "ask the
+                // customer to present their card" is more use than "waiting".
+                child: ValueListenableBuilder<String?>(
+                  valueListenable: prompt,
+                  builder: (_, p, _) => ValueListenableBuilder<DojoStage>(
+                    valueListenable: stage,
+                    builder: (_, s, _) => Text(
+                      p ??
+                          switch (s) {
+                            DojoStage.creating => 'Starting the payment…',
+                            DojoStage.sendingToTerminal =>
+                              'Sending to the card machine…',
+                            DojoStage.awaitingCard => 'Waiting for the card…',
+                            DojoStage.checking => 'Checking with Dojo…',
+                          },
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
+          actions: desktop == null
+              ? null
+              : [
+                  TextButton(
+                    onPressed: () {
+                      // Stop polling; the result comes back as "abandoned",
+                      // never as paid or declined.
+                      desktop.cancel();
+                      Navigator.of(dialogContext).pop();
+                    },
+                    child: const Text('Cancel payment'),
+                  ),
+                ],
         ),
       ),
     );
 
+    // Drive the dialog's message from the provider's progress.
+    desktop?.onStageChanged = (s) => stage.value = s;
+
     final result = await dojo.take(amountMinor, orderId: widget.orderId);
 
-    if (mounted) Navigator.of(context, rootNavigator: true).pop();
+    // Detach before disposing, or a late poll would write to a dead notifier.
+    rest?.onTerminalUpdate = null;
+    stage.dispose();
+    prompt.dispose();
+    // The dialog may already be gone if the clerk cancelled.
+    if (mounted && Navigator.of(context, rootNavigator: true).canPop()) {
+      Navigator.of(context, rootNavigator: true).pop();
+    }
 
     if (!result.approved) {
       _toast(result.message ?? 'Card payment declined.');

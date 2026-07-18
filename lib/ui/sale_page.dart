@@ -403,19 +403,21 @@ class _ProductGrid extends StatelessWidget {
       return const Center(child: Text('No products in this category.'));
     }
 
-    // Two columns on a phone, three on a wider screen. The tiles stay tall
-    // enough to be a comfortable thumb target rather than the wide, shallow
-    // buttons that suit a desk-mounted till.
+    // The grid adapts to the width it is given rather than to the platform:
+    // a Windows till and an Android tablet at the same size get the same
+    // layout. Tiles are sized by a max extent so they stay a comfortable touch
+    // target on a large desk-mounted screen instead of stretching into a few
+    // enormous buttons.
     final phone = context.isPhone;
 
-    // Media tiles are near-square to give the image/emoji room; a plain text
-    // menu keeps the wide, shallow buttons.
-    final ratio = _hasMedia ? (phone ? 1.0 : 1.3) : (phone ? 1.6 : 3.1);
+    // Media tiles are near-square to give the picture room; a plain text menu
+    // is shallower, but still tall enough for a name above a price.
+    final ratio = _hasMedia ? 1.0 : 1.5;
 
     return GridView.builder(
       padding: const EdgeInsets.all(12),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: phone ? 2 : 3,
+      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: phone ? 220 : 240,
         mainAxisSpacing: 10,
         crossAxisSpacing: 10,
         childAspectRatio: ratio,
@@ -424,7 +426,9 @@ class _ProductGrid extends StatelessWidget {
       itemBuilder: (context, i) => _ProductTile(
         product: products[i],
         color: Pos.parseColor(products[i].buttonColor) ?? color,
-        showPrice: phone || _hasMedia,
+        // The price is part of the button on every platform — a till button
+        // without a price makes the clerk guess.
+        showPrice: true,
         onTap: () => onTap(products[i]),
       ),
     );
@@ -456,76 +460,205 @@ class _ProductTile extends StatelessWidget {
     final hasImage = product.imageUrl?.isNotEmpty ?? false;
     final hasEmoji = product.emoji?.isNotEmpty ?? false;
 
-    // A product with a picture shows the picture ALONE — no name, no price
-    // overlaid. The image was cropped square in the back office for exactly
-    // this, and the clerk recognises the item by sight. Emoji and plain-text
-    // products keep their label and price.
+    // A product with a picture: the picture fills the tile and the name and
+    // price sit in a band along the bottom, over a scrim so they stay legible
+    // whatever the image is. The clerk recognises the item by sight but never
+    // has to guess what it costs.
     if (hasImage) {
-      return Material(
-        color: color,
-        borderRadius: BorderRadius.circular(6),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Image.network(
-            product.imageUrl!,
-            fit: BoxFit.cover,
-            // A broken image URL falls back to the name on the coloured tile,
-            // so the button is still usable rather than blank.
-            errorBuilder: (_, _, _) => _LabelTile(
-              name: product.name,
-              priceMinor: showPrice ? product.priceMinor : null,
+      return _PressableTile(
+        onTap: onTap,
+        child: Material(
+          color: color,
+          borderRadius: BorderRadius.circular(6),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Image.network(
+                  product.imageUrl!,
+                  fit: BoxFit.cover,
+                  // A broken image URL falls back to the name on the coloured
+                  // tile, so the button is still usable rather than blank.
+                  errorBuilder: (_, _, _) => _LabelTile(
+                    name: product.name,
+                    priceMinor: showPrice ? product.priceMinor : null,
+                  ),
+                ),
+                // Scrim: only over the lower part, so it darkens the text band
+                // without dulling the whole picture.
+                const Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.transparent, Colors.black87],
+                      ),
+                    ),
+                    child: SizedBox(height: 72, width: double.infinity),
+                  ),
+                ),
+                Positioned(
+                  left: 8,
+                  right: 8,
+                  bottom: 8,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          product.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w600,
+                            height: 1.2,
+                            shadows: [
+                              Shadow(blurRadius: 4, color: Colors.black87),
+                            ],
+                          ),
+                        ),
+                      ),
+                      if (showPrice) ...[
+                        const SizedBox(width: 6),
+                        // The price rides in a solid pill rather than as bare
+                        // text: over a photograph, plain white numerals lose
+                        // contrast against whatever happens to be behind them.
+                        DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: color,
+                            borderRadius: BorderRadius.circular(20),
+                            boxShadow: const [
+                              BoxShadow(
+                                color: Colors.black45,
+                                blurRadius: 6,
+                                offset: Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            child: Text(
+                              money(product.priceMinor),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
         ),
       );
     }
 
-    return Material(
-      color: color,
-      borderRadius: BorderRadius.circular(6),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              // Only reserve space for the emoji when there is one — a plain
-              // text button has no media slot, so the name and price sit
-              // centred with no dead space above them.
-              if (hasEmoji) ...[
-                Text(product.emoji!, style: const TextStyle(fontSize: 30)),
-                const SizedBox(height: 4),
-              ],
-              Text(
-                product.name,
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              if (showPrice)
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text(
-                    money(product.priceMinor),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                    ),
+    return _PressableTile(
+      onTap: onTap,
+      child: Material(
+        color: color,
+        borderRadius: BorderRadius.circular(6),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              // Name and price sit centred in the tile — the whole button is the
+              // target, so the label reads best in the middle of it. Picture
+              // tiles are the exception: there the text moves to a band at the
+              // foot so it does not cover the image.
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                if (hasEmoji) ...[
+                  Text(product.emoji!, style: const TextStyle(fontSize: 32)),
+                  const SizedBox(height: 4),
+                ],
+                Text(
+                  product.name,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-            ],
+                if (showPrice)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      money(product.priceMinor),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Dips and lifts its child while pressed.
+///
+/// A touch till gives no haptics and the clerk is often not looking straight at
+/// the button, so the tile itself confirms the press: it shrinks slightly under
+/// the finger and springs back. Cheap (a single AnimatedScale) and it makes
+/// double-taps obvious.
+class _PressableTile extends StatefulWidget {
+  const _PressableTile({required this.onTap, required this.child});
+
+  final VoidCallback onTap;
+  final Widget child;
+
+  @override
+  State<_PressableTile> createState() => _PressableTileState();
+}
+
+class _PressableTileState extends State<_PressableTile> {
+  bool _down = false;
+
+  void _set(bool v) {
+    if (_down != v && mounted) setState(() => _down = v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedScale(
+      scale: _down ? 0.96 : 1,
+      duration: const Duration(milliseconds: 90),
+      curve: Curves.easeOut,
+      child: GestureDetector(
+        onTapDown: (_) => _set(true),
+        onTapUp: (_) => _set(false),
+        onTapCancel: () => _set(false),
+        // The tap itself is handled by the InkWell inside, which also draws the
+        // ripple; this layer only tracks the press for the scale.
+        child: widget.child,
       ),
     );
   }
@@ -596,9 +729,10 @@ class _OpenOrdersBar extends ConsumerWidget {
     // tables (i.e. a fresh walk-in, or a table just recalled onto the till).
     final currentIsBooked = booked.any((o) => o.id == currentOrderId);
 
-    // Nothing else on the go and this bill is a plain walk-in: the bar would
-    // just say "Current" on its own, so keep it out of the way.
-    if (booked.isEmpty && !currentIsBooked) return const SizedBox.shrink();
+    // The bar is always shown, even with nothing parked: it carries "New",
+    // which is how the clerk starts a second bill. Hiding it until a table
+    // happened to be booked left a desk-mounted till with no visible way to
+    // run two parties at once.
 
     return Container(
       height: 52,

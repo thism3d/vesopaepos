@@ -1,4 +1,4 @@
-package uk.co.vesopa.vesopa_epos
+package com.vesopaepos.app
 
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine

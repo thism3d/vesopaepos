@@ -96,18 +96,26 @@ void main() {
     expect(outbox.single.entityId, id);
   });
 
-  test('a void clears the sale and queues nothing', () async {
+  test('a void clears the sale and is never queued as one', () async {
     final id = await repo.openOrder();
     await repo.addLine(id, coffee);
-    await repo.voidOrder(id);
+    await repo.voidOrder(id, reason: 'Test');
 
     final order = await repo.watchOrder(id).first;
     expect(order.status, 'void');
     expect(order.totalMinor, 0);
     expect(await repo.watchLines(id).first, isEmpty);
 
-    // A voided order was never a sale, so the server must never hear about it.
-    expect(await db.select(db.outboxEntries).get(), isEmpty);
+    // A voided order was never a sale, so no *order* may reach the server. The
+    // void itself is queued separately as an audit record — the back office is
+    // meant to see who reversed what, and why.
+    final queued = await db.select(db.outboxEntries).get();
+    expect(queued.where((e) => e.entity == 'order'), isEmpty);
+    expect(
+      queued.map((e) => e.entity),
+      contains('void'),
+      reason: 'the reversal should still be auditable',
+    );
   });
 
   test('a part payment leaves the sale open and unqueued', () async {

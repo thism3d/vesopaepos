@@ -7,5 +7,5 @@
 
 # This app reaches the SDK reflectively (see DojoPaymentHandler); keep our own
 # handler and the Kotlin function interface used for the result callback.
--keep class uk.co.vesopa.vesopa_epos.** { *; }
+-keep class com.vesopaepos.app.** { *; }
 -keep class kotlin.jvm.functions.** { *; }

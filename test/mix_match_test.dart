@@ -11,6 +11,7 @@ OrderLine line(int plu, String name, int priceMinor, double qty) => OrderLine(
       quantity: qty,
       unitPriceMinor: priceMinor,
       taxPercentage: 20,
+      lineDiscountMinor: 0,
     );
 
 MixMatchDeal deal(int id, String name, int trigger, int priceMinor) =>

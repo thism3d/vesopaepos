@@ -21,12 +21,105 @@ class PaymentResult {
   final String? message;
 }
 
-/// A created Dojo payment intent: its id and the client session secret the
-/// native drop-in SDK needs to drive the card presentation and 3-D Secure.
+/// A created Dojo payment intent.
+///
+/// Carries the three ways the card can then be presented:
+///  * [clientSecret] — for the native Android drop-in SDK;
+///  * [paymentLink] — Dojo's hosted checkout page, which is how a desktop till
+///    with no card reader takes the card;
+///  * the id itself — for the Terminal API, which pushes the payment to a
+///    physical Dojo reader.
 class DojoIntent {
-  const DojoIntent({required this.id, this.clientSecret});
+  const DojoIntent({required this.id, this.clientSecret, this.paymentLink});
   final String id;
   final String? clientSecret;
+  final String? paymentLink;
+}
+
+/// A card machine that can be sent a payment.
+class DojoTerminal {
+  const DojoTerminal({required this.id, required this.tid, required this.status});
+
+  final String id;
+
+  /// The number printed on the device, which is how staff tell two readers
+  /// apart — the opaque `tm_…` id means nothing on the counter.
+  final String tid;
+  final String status;
+
+  bool get available => status.toLowerCase() == 'available';
+
+  factory DojoTerminal.fromJson(Map<String, dynamic> j) => DojoTerminal(
+    id: j['id'] as String,
+    tid: (j['properties'] as Map<String, dynamic>?)?['tid'] as String? ?? '',
+    status: j['status'] as String? ?? '',
+  );
+
+  /// e.g. "VCMtestSIS0 (available)".
+  String get label => tid.isEmpty ? id : tid;
+}
+
+/// A pay-at-counter session: one attempt to take a card on a reader.
+class DojoSession {
+  const DojoSession({
+    required this.id,
+    required this.status,
+    this.lastNotification,
+  });
+
+  final String id;
+  final String status;
+
+  /// The most recent prompt from the reader — "PresentCard", "PleaseWait" —
+  /// so the till can tell the clerk what the customer is being asked to do.
+  final String? lastNotification;
+
+  /// Money is in.
+  ///
+  /// Only `Captured` counts. `Authorized` is NOT included: on a signature sale
+  /// the session passes through Authorized *before* the signature is verified,
+  /// so treating it as paid books money that a rejected signature then
+  /// declines.
+  bool get captured => status.toLowerCase() == 'captured';
+
+  /// The card was accepted but the sale is not finished — typically waiting on
+  /// signature verification.
+  bool get authorized => status.toLowerCase() == 'authorized';
+
+  /// Will never complete.
+  bool get failed => const {
+    'declined',
+    'expired',
+    'canceled',
+    'cancelled',
+  }.contains(status.toLowerCase());
+
+  /// The clerk must accept or reject the cardholder's signature before this
+  /// session can finish.
+  bool get needsSignature =>
+      status.toLowerCase() == 'signatureverificationrequired';
+
+  /// The reader's prompt, in words the clerk can act on. Observed in the
+  /// sandbox: PresentCard → EnterPin → RemoveCard on a chip-and-PIN sale.
+  String get prompt => switch (lastNotification) {
+    'PresentCard' => 'Ask the customer to present their card',
+    'EnterPin' => 'Customer is entering their PIN',
+    'RemoveCard' => 'Ask the customer to remove their card',
+    'PleaseWait' => 'Please wait…',
+    _ when needsSignature => 'Check the signature',
+    _ => 'Waiting for the card machine…',
+  };
+
+  factory DojoSession.fromJson(Map<String, dynamic> j) {
+    final events = (j['notificationEvents'] as List?) ?? const [];
+    return DojoSession(
+      id: j['id'] as String,
+      status: j['status'] as String? ?? '',
+      lastNotification: events.isEmpty
+          ? null
+          : (events.last as Map<String, dynamic>)['notificationType'] as String?,
+    );
+  }
 }
 
 /// A way of taking money. Cash needs no device; card goes to Dojo.
@@ -65,8 +158,11 @@ class DojoProvider implements PaymentProvider {
     required this.apiKey,
     this.terminalId,
     this.softwareHouseId,
+    this.resellerId,
     this.baseUrl = 'https://api.dojo.tech',
-    this.apiVersion = '2024-01-01',
+    // The terminal endpoints (/terminals, /terminal-sessions) were added in
+    // this API version; the older 2024-01-01 does not serve them.
+    this.apiVersion = '2024-02-05',
     this.pollTimeout = const Duration(minutes: 2),
     http.Client? client,
   }) : _client = client ?? http.Client();
@@ -76,8 +172,11 @@ class DojoProvider implements PaymentProvider {
   /// The physical card machine. Null means card-not-present.
   final String? terminalId;
 
-  /// Partner credential required by Dojo's terminal endpoints.
+  /// Partner credentials required by Dojo's terminal endpoints. BOTH are
+  /// needed — a missing reseller-id fails the call just as a missing
+  /// software-house-id does.
   final String? softwareHouseId;
+  final String? resellerId;
 
   final String baseUrl;
   final String apiVersion;
@@ -129,6 +228,9 @@ class DojoProvider implements PaymentProvider {
       // Dojo returns the secret as `clientSessionSecret`; the SDK calls the same
       // value `clientSecret`.
       clientSecret: json['clientSessionSecret'] as String?,
+      // Hosted checkout for this intent — what the desktop till opens when it
+      // has no card reader attached.
+      paymentLink: json['paymentLink'] as String?,
     );
   }
 
@@ -145,31 +247,125 @@ class DojoProvider implements PaymentProvider {
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
+  /// Headers for the terminal endpoints.
+  ///
+  /// These need the two partner ids on top of the usual auth. Both are
+  /// mandatory: with the software-house id alone Dojo answers 401, which is
+  /// what made the terminal route look unavailable.
+  Map<String, String> get _terminalHeaders => {
+    ..._headers,
+    'Accept': 'application/json',
+    // Null-aware map entries: the header is omitted entirely when the id is
+    // not configured, rather than sent empty.
+    'software-house-id': ?softwareHouseId,
+    'reseller-id': ?resellerId,
+  };
+
+  /// The card machines this account can send a payment to.
+  Future<List<DojoTerminal>> listTerminals({String status = 'Available'}) async {
+    final res = await _client
+        .get(
+          Uri.parse('$baseUrl/terminals?statuses=$status'),
+          headers: _terminalHeaders,
+        )
+        .timeout(const Duration(seconds: 20));
+
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw DojoException('Could not list card machines: ${res.body}');
+    }
+    return (jsonDecode(res.body) as List)
+        .map((t) => DojoTerminal.fromJson(t as Map<String, dynamic>))
+        .toList();
+  }
+
   /// Ask the card machine to take the payment.
-  Future<void> sendToTerminal(String intentId) async {
-    final id = softwareHouseId;
-    if (id == null || terminalId == null) {
+  ///
+  /// Returns the terminal *session* id: the payment is then tracked through
+  /// that session, not through the intent, until it captures.
+  Future<String> startTerminalSession(String intentId) async {
+    if (terminalId == null || softwareHouseId == null || resellerId == null) {
       throw DojoException(
-        'Card terminal not configured. Dojo requires a software-house-id '
-        '(issued on partner onboarding) plus a terminal id.',
+        'Card machine not configured. A terminal id, software-house-id and '
+        'reseller-id are all required for pay-at-counter.',
       );
     }
 
     final res = await _client
         .post(
-          Uri.parse('$baseUrl/payment-intents/$intentId/terminal'),
-          headers: {..._headers, 'software-house-id': id},
-          body: jsonEncode({'terminalId': terminalId}),
+          Uri.parse('$baseUrl/terminal-sessions'),
+          headers: _terminalHeaders,
+          body: jsonEncode({
+            'terminalId': terminalId,
+            'details': {
+              'sessionType': 'Sale',
+              'sale': {'paymentIntentId': intentId},
+            },
+          }),
         )
         .timeout(const Duration(seconds: 30));
 
     if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw DojoException('Terminal rejected the payment: ${res.body}');
+      throw DojoException('The card machine refused the payment: ${res.body}');
+    }
+    return (jsonDecode(res.body) as Map<String, dynamic>)['id'] as String;
+  }
+
+  /// Read a terminal session: its status, and any prompt the clerk should act
+  /// on ("present card", "please wait").
+  Future<DojoSession> fetchSession(String sessionId) async {
+    final res = await _client
+        .get(
+          Uri.parse('$baseUrl/terminal-sessions/$sessionId'),
+          headers: _terminalHeaders,
+        )
+        .timeout(const Duration(seconds: 20));
+
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw DojoException('Could not read the card machine: ${res.body}');
+    }
+    return DojoSession.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+  }
+
+  /// Accept or reject the cardholder's signature, when the terminal asks for
+  /// one. Until this is answered the session sits unresolved.
+  Future<void> answerSignature(String sessionId, {required bool accepted}) async {
+    final res = await _client
+        .put(
+          Uri.parse('$baseUrl/terminal-sessions/$sessionId/signature'),
+          headers: _terminalHeaders,
+          body: jsonEncode({'accepted': accepted}),
+        )
+        .timeout(const Duration(seconds: 20));
+
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw DojoException('Could not confirm the signature: ${res.body}');
     }
   }
 
-  static const _paid = {'succeeded', 'captured'};
-  static const _failed = {'failed', 'cancelled', 'canceled', 'expired'};
+  /// Cancel a session. Dojo only honours this before a card is presented, so a
+  /// failure here is expected and is reported to the caller rather than thrown.
+  Future<bool> cancelSession(String sessionId) async {
+    try {
+      final res = await _client
+          .put(
+            Uri.parse('$baseUrl/terminal-sessions/$sessionId/cancel'),
+            headers: _terminalHeaders,
+          )
+          .timeout(const Duration(seconds: 20));
+      return res.statusCode >= 200 && res.statusCode < 300;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Intent statuses that mean the money is in, and the ones that mean it will
+  /// never arrive. Public so every provider judges an intent the same way —
+  /// two copies of this would eventually disagree about what counts as paid.
+  static const paidStatuses = {'succeeded', 'captured'};
+  static const failedStatuses = {'failed', 'cancelled', 'canceled', 'expired'};
+
+  static const _paid = paidStatuses;
+  static const _failed = failedStatuses;
 
   /// Wait for the customer to present their card.
   Future<PaymentResult> confirm(String intentId, int amountMinor) async {
@@ -211,13 +407,94 @@ class DojoProvider implements PaymentProvider {
     );
   }
 
+  /// Called while a terminal payment is running, with the reader's latest
+  /// prompt ("PresentCard", "PleaseWait") so the till can show the clerk what
+  /// the customer is being asked to do.
+  void Function(DojoSession session)? onTerminalUpdate;
+
+  /// Asked when the reader wants the cardholder's signature checked. Returning
+  /// true accepts it. Defaults to accepting: the sandbox always asks, and a
+  /// session left unanswered never completes.
+  Future<bool> Function()? onSignatureRequested;
+
+  /// Follow a terminal session to its conclusion.
+  ///
+  /// Verified against the sandbox, where a session runs
+  /// `InitiateRequested → SignatureVerificationRequired → Captured`. The
+  /// signature step is not optional — the session stalls there until answered.
+  Future<PaymentResult> awaitTerminal(
+    String sessionId,
+    String intentId,
+    int amountMinor,
+  ) async {
+    final deadline = DateTime.now().add(pollTimeout);
+    var signatureAnswered = false;
+
+    while (DateTime.now().isBefore(deadline)) {
+      final session = await fetchSession(sessionId);
+      onTerminalUpdate?.call(session);
+
+      if (session.captured) {
+        return PaymentResult(
+          approved: true,
+          amountMinor: amountMinor,
+          reference: intentId,
+          message: session.status,
+        );
+      }
+      if (session.failed) {
+        return PaymentResult(
+          approved: false,
+          amountMinor: amountMinor,
+          reference: intentId,
+          message: 'Card payment ${session.status.toLowerCase()}',
+        );
+      }
+      if (session.needsSignature && !signatureAnswered) {
+        signatureAnswered = true;
+        final accepted = await (onSignatureRequested?.call() ?? Future.value(true));
+        await answerSignature(sessionId, accepted: accepted);
+        if (!accepted) {
+          return PaymentResult(
+            approved: false,
+            amountMinor: amountMinor,
+            reference: intentId,
+            message: 'Signature rejected',
+          );
+        }
+      }
+
+      await Future<void>.delayed(const Duration(seconds: 2));
+    }
+
+    // Out of time with the session unresolved. The card may still be mid-flight
+    // on the reader, so this is "unknown", never a decline.
+    return PaymentResult(
+      approved: false,
+      amountMinor: amountMinor,
+      reference: intentId,
+      message: 'Timed out at the card machine. Check it before retrying — the '
+          'payment may still have gone through.',
+    );
+  }
+
+  /// Whether this till has everything it needs to send a payment to a reader.
+  bool get canUseTerminal =>
+      (terminalId?.isNotEmpty ?? false) &&
+      (softwareHouseId?.isNotEmpty ?? false) &&
+      (resellerId?.isNotEmpty ?? false);
+
   @override
   Future<PaymentResult> take(int amountMinor, {String? orderId}) async {
     try {
       final intent = await createIntent(amountMinor, orderId: orderId);
 
-      if (softwareHouseId != null && terminalId != null) {
-        await sendToTerminal(intent.id);
+      // With a reader configured the payment is driven through a terminal
+      // session; polling the intent alone would wait forever, because nothing
+      // would ever present the card.
+      if (canUseTerminal) {
+        final sessionId = await startTerminalSession(intent.id);
+        return awaitTerminal(sessionId, intent.id, amountMinor);
       }
 
       return confirm(intent.id, amountMinor);

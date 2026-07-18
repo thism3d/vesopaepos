@@ -1,8 +1,11 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../main.dart';
 import '../payments/dojo_config.dart';
+import '../payments/payment_provider.dart';
 import 'theme.dart';
 import 'theme_controller.dart';
 
@@ -159,11 +162,11 @@ class _DojoCard extends ConsumerWidget {
             subtitle: Text(
               configured
                   ? '${config.sandbox ? 'Sandbox' : 'Live'} · key '
-                        '${_masked(config.apiKey)}'
-                        '${config.terminalId.isNotEmpty ? ' · terminal ${config.terminalId}' : ' · card-not-present'}'
+                        '${_masked(config.apiKey)}\n${_howCardsAreTaken(config)}'
                   : 'Enter your Dojo key to take card payments on this till.',
               style: const TextStyle(fontSize: 12.5),
             ),
+            isThreeLine: configured,
             trailing: TextButton(
               onPressed: () => _edit(context, ref, config),
               child: Text(configured ? 'Edit' : 'Set up'),
@@ -172,6 +175,32 @@ class _DojoCard extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  /// Spell out how this terminal will actually present a card, because it
+  /// differs by platform and by what has been filled in — and a clerk who does
+  /// not know which route is live cannot tell a misconfiguration from a decline.
+  static String _howCardsAreTaken(DojoConfig config) {
+    final hasPartnerIds =
+        config.softwareHouseId.trim().isNotEmpty &&
+        config.resellerId.trim().isNotEmpty;
+    final hasTerminal = config.terminalId.trim().isNotEmpty;
+
+    // A card machine is used wherever one is set up, on every platform.
+    if (hasTerminal && hasPartnerIds) {
+      return 'Pay at counter on card machine ${config.terminalId}.';
+    }
+    if (hasTerminal) {
+      // The ids are not optional: Dojo refuses the terminal call without both,
+      // so say so here rather than letting it fail at the moment of payment.
+      return 'Card machine set, but the software-house / reseller ids are '
+          'incomplete — the card will be keyed instead.';
+    }
+    if (Platform.isAndroid) {
+      return 'No card machine: card entry on this device (Dojo drop-in).';
+    }
+    return 'No card machine: the card is keyed on screen in a Dojo checkout '
+        'window.';
   }
 
   /// Never show the full key back — enough to recognise it, no more.
@@ -221,14 +250,41 @@ class _DojoEditorState extends State<_DojoEditor> {
   late final _softwareHouse = TextEditingController(
     text: widget.current.softwareHouseId,
   );
+  late final _reseller = TextEditingController(text: widget.current.resellerId);
   late bool _sandbox = widget.current.sandbox;
+
+  /// Readers found on the account, so the clerk picks one instead of copying an
+  /// opaque `tm_…` id from a portal.
+  List<DojoTerminal>? _terminals;
+  bool _loadingTerminals = false;
+  String? _terminalError;
 
   @override
   void dispose() {
     _key.dispose();
     _terminal.dispose();
     _softwareHouse.dispose();
+    _reseller.dispose();
     super.dispose();
+  }
+
+  Future<void> _findTerminals() async {
+    setState(() {
+      _loadingTerminals = true;
+      _terminalError = null;
+    });
+    try {
+      final found = await DojoProvider(
+        apiKey: _key.text.trim(),
+        softwareHouseId: _softwareHouse.text.trim(),
+        resellerId: _reseller.text.trim(),
+      ).listTerminals();
+      if (mounted) setState(() => _terminals = found);
+    } catch (e) {
+      if (mounted) setState(() => _terminalError = '$e');
+    } finally {
+      if (mounted) setState(() => _loadingTerminals = false);
+    }
   }
 
   @override
@@ -272,9 +328,10 @@ class _DojoEditorState extends State<_DojoEditor> {
               ),
               const Divider(),
               Text(
-                'Optional — for a physical card terminal (needs a Dojo '
-                'software-house id, issued on partner onboarding). Leave blank '
-                'to create card-not-present intents only.',
+                'Card machine (pay at counter). With a machine selected the '
+                'card is taken on it; without one the card is keyed on screen. '
+                'Both partner ids are required — the machine list is refused '
+                'if either is missing.',
                 style: TextStyle(
                   fontSize: 12,
                   color: Theme.of(context).hintColor,
@@ -282,20 +339,95 @@ class _DojoEditorState extends State<_DojoEditor> {
               ),
               const SizedBox(height: 12),
               TextField(
-                controller: _terminal,
+                controller: _softwareHouse,
                 decoration: const InputDecoration(
-                  labelText: 'Terminal id (optional)',
+                  labelText: 'Software-house id',
                   border: OutlineInputBorder(),
                 ),
               ),
               const SizedBox(height: 12),
               TextField(
-                controller: _softwareHouse,
+                controller: _reseller,
                 decoration: const InputDecoration(
-                  labelText: 'Software-house id (optional)',
+                  labelText: 'Reseller id',
                   border: OutlineInputBorder(),
                 ),
               ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _terminal,
+                decoration: InputDecoration(
+                  labelText: 'Card machine (blank = none)',
+                  border: const OutlineInputBorder(),
+                  helperText: _terminal.text.isEmpty
+                      ? 'No machine: the card is keyed on screen.'
+                      : null,
+                  suffixIcon: _terminal.text.isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: 'Use no card machine',
+                          icon: const Icon(Icons.clear),
+                          onPressed: () => setState(_terminal.clear),
+                        ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _loadingTerminals ? null : _findTerminals,
+                    icon: _loadingTerminals
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.search, size: 18),
+                    label: const Text('Find card machines'),
+                  ),
+                ],
+              ),
+              if (_terminalError != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    _terminalError!,
+                    style: const TextStyle(fontSize: 12, color: Pos.red),
+                  ),
+                ),
+              if (_terminals != null) ...[
+                const SizedBox(height: 8),
+                if (_terminals!.isEmpty)
+                  Text(
+                    'No card machines available on this account.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).hintColor,
+                    ),
+                  )
+                else
+                  // Tap to select — the id goes in the field, so what is saved
+                  // is still just the id.
+                  for (final t in _terminals!)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      leading: Icon(
+                        _terminal.text.trim() == t.id
+                            ? Icons.radio_button_checked
+                            : Icons.radio_button_unchecked,
+                        color: _terminal.text.trim() == t.id
+                            ? Pos.brand
+                            : Theme.of(context).hintColor,
+                      ),
+                      onTap: () => setState(() => _terminal.text = t.id),
+                      title: Text(t.label),
+                      subtitle: Text(
+                        '${t.status} · ${t.id}',
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                    ),
+              ],
             ],
           ),
         ),
@@ -312,6 +444,7 @@ class _DojoEditorState extends State<_DojoEditor> {
               apiKey: _key.text.trim(),
               terminalId: _terminal.text.trim(),
               softwareHouseId: _softwareHouse.text.trim(),
+              resellerId: _reseller.text.trim(),
               sandbox: _sandbox,
             ),
           ),

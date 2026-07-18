@@ -67,6 +67,35 @@ dev_dependencies:
   drift_dev: ^2.34.0
   build_runner: ^2.15.1
   flutter_launcher_icons: ^0.14.4
+  msix: ^3.18.0
+
+# Windows Store packaging (`dart run msix:create`).
+#
+# The identity values come from Partner Center and must match the registered
+# app exactly, or the Store rejects the upload:
+#   * identity_name / publisher_display_name — as reserved in Partner Center
+#   * publisher — the Windows publisher ID (CN=…), NOT the display name
+#
+# The certificate is only used for *sideloading* a signed MSIX (a demo machine,
+# or the till before Store distribution). For a Store submission Microsoft signs
+# the package themselves, so CI builds unsigned and lets the Store do it — which
+# is also why no .pfx is committed here.
+msix_config:
+  display_name: VESOPA EPOS
+  publisher_display_name: Vesopa EPOS Limited
+  identity_name: com.vesopaepos.app
+  publisher: CN=3AD172E6-2CBA-4B09-AD50-B52C88D57FB3
+  # MSIX versions are always four parts and the last must be 0 for the Store.
+  msix_version: 1.0.0.0
+  logo_path: windows\runner\resources\app_icon.ico
+  capabilities: internetClient, privateNetworkClientServer
+  languages: en-us
+  # Lets the till be launched as `vesopa` from a command line or shortcut, and
+  # deep-linked as vesopa:// (used for returning from the Dojo checkout window).
+  execution_alias: vesopa
+  protocol_activation: vesopa
+  install_certificate: false
+  enable_at_startup: false
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

@@ -33,7 +33,11 @@ void main() {
         overrides: [databaseProvider.overrideWithValue(db)],
         child: MaterialApp(
           home: Scaffold(
-            body: SalePage(orderId: orderId, onNewOrder: () {}),
+            body: SalePage(
+              orderId: orderId,
+              onNewOrder: () {},
+              onSwitchOrder: (_) {},
+            ),
           ),
         ),
       ),

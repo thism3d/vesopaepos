@@ -12,20 +12,50 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// it and persists.
 class DojoConfig {
   const DojoConfig({
-    this.apiKey = '',
+    this.apiKey = defaultSandboxKey,
     this.terminalId = '',
-    this.softwareHouseId = '',
+    this.softwareHouseId = defaultSoftwareHouseId,
+    this.resellerId = defaultResellerId,
     this.sandbox = true,
   });
 
+  /// Sandbox defaults, so a freshly built till can take a test card without
+  /// anyone pasting credentials in first.
+  ///
+  /// The API key is deliberately NOT a literal here: this repository is public,
+  /// and a key committed to source is a published key. It comes from a
+  /// build-time define instead —
+  ///
+  ///     flutter build windows --dart-define=DOJO_API_KEY=sk_sandbox_…
+  ///
+  /// (CI passes it from a repository secret). With no define the till simply
+  /// starts unconfigured and the operator enters a key in Settings, which is
+  /// the right behaviour for a real venue anyway.
+  ///
+  /// The partner ids are Dojo's own published sandbox placeholders, documented
+  /// publicly, so they are safe to ship as defaults. Verified: this pair lists
+  /// real sandbox terminals and completes a pay-at-counter sale.
+  static const defaultSandboxKey = String.fromEnvironment('DOJO_API_KEY');
+  static const defaultSoftwareHouseId = String.fromEnvironment(
+    'DOJO_SOFTWARE_HOUSE_ID',
+    defaultValue: 'softwareHouse1',
+  );
+  static const defaultResellerId = String.fromEnvironment(
+    'DOJO_RESELLER_ID',
+    defaultValue: 'reseller1',
+  );
+
   final String apiKey;
 
-  /// The physical card machine id. Blank = card-not-present (intent only).
+  /// The physical card machine id. Blank = no reader on this till, so the card
+  /// is taken another way (Android drop-in, or on-screen checkout on desktop).
   final String terminalId;
 
-  /// Partner credential Dojo issues on onboarding; needed for the terminal
-  /// endpoint. Blank until Dojo grant one.
+  /// Partner credentials Dojo issues on onboarding. Both are required by the
+  /// terminal endpoints — without `reseller-id` the call is rejected even when
+  /// the software-house id is right.
   final String softwareHouseId;
+  final String resellerId;
 
   /// Sandbox vs live.
   ///
@@ -52,11 +82,13 @@ class DojoConfig {
     String? apiKey,
     String? terminalId,
     String? softwareHouseId,
+    String? resellerId,
     bool? sandbox,
   }) => DojoConfig(
     apiKey: apiKey ?? this.apiKey,
     terminalId: terminalId ?? this.terminalId,
     softwareHouseId: softwareHouseId ?? this.softwareHouseId,
+    resellerId: resellerId ?? this.resellerId,
     sandbox: sandbox ?? this.sandbox,
   );
 
@@ -64,13 +96,17 @@ class DojoConfig {
     'apiKey': apiKey,
     'terminalId': terminalId,
     'softwareHouseId': softwareHouseId,
+    'resellerId': resellerId,
     'sandbox': sandbox,
   };
 
   factory DojoConfig.fromJson(Map<String, dynamic> j) => DojoConfig(
     apiKey: j['apiKey'] as String? ?? '',
     terminalId: j['terminalId'] as String? ?? '',
-    softwareHouseId: j['softwareHouseId'] as String? ?? '',
+    // Tills saved before these existed fall back to the sandbox partner ids
+    // rather than to blank, which would make the terminal call 401.
+    softwareHouseId: j['softwareHouseId'] as String? ?? defaultSoftwareHouseId,
+    resellerId: j['resellerId'] as String? ?? defaultResellerId,
     sandbox: j['sandbox'] as bool? ?? true,
   );
 }
