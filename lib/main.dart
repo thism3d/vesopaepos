@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'config/constants.dart';
 import 'data/auth_service.dart';
 import 'data/branding.dart';
 import 'data/commerce.dart';
@@ -25,32 +26,12 @@ import 'ui/splash_page.dart';
 import 'ui/theme.dart';
 import 'ui/theme_controller.dart';
 
-/// Where the server lives, as seen from the device the app is running on.
-///
-/// On desktop that is localhost. On the Android emulator, 10.0.2.2 is the
-/// host machine — "localhost" there means the emulator itself, so the till
-/// would never find the server. A real phone or tablet needs the Mac's LAN
-/// address, which only you know:
-///
-///   flutter build apk --dart-define=API_HOST=192.168.1.42
-String _defaultHost() {
-  const override = String.fromEnvironment('API_HOST');
-  if (override.isNotEmpty) return override;
-  if (Platform.isAndroid) return '10.0.2.2';
-  return 'localhost';
-}
+/// Where the server lives. Both resolve from [Api], which reads the single
+/// `useLiveServer` switch in `config/constants.dart` — see that file to move
+/// the app between the local and live servers.
+final apiBaseProvider = Provider<String>((_) => Api.resolvedBase);
 
-final apiBaseProvider = Provider<String>((_) {
-  const full = String.fromEnvironment('API_BASE');
-  if (full.isNotEmpty) return full;
-  return 'http://${_defaultHost()}:4000';
-});
-
-final wsUrlProvider = Provider<String>((_) {
-  const full = String.fromEnvironment('WS_URL');
-  if (full.isNotEmpty) return full;
-  return 'ws://${_defaultHost()}:4000/ws';
-});
+final wsUrlProvider = Provider<String>((_) => Api.resolvedWs);
 
 final databaseProvider = Provider<AppDatabase>((ref) {
   final db = AppDatabase();

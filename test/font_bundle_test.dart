@@ -63,7 +63,11 @@ void main() {
       final present = Directory('assets/fonts')
           .listSync()
           .whereType<File>()
-          .map((f) => 'assets/fonts/${f.uri.pathSegments.last}')
+          .map((f) => f.uri.pathSegments.last)
+          // macOS drops .DS_Store into any directory it displays. It is
+          // gitignored and never ships, so failing on it would be noise.
+          .where((n) => !n.startsWith('.'))
+          .map((n) => 'assets/fonts/$n')
           .toSet();
       // Both directions matter: an undeclared font is missing at runtime, and
       // a declared-but-absent one fails the build.

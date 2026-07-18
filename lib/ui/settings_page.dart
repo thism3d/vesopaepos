@@ -3,6 +3,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../config/constants.dart';
 import '../main.dart';
 import '../payments/dojo_config.dart';
 import '../payments/payment_provider.dart';
@@ -85,7 +86,14 @@ class SettingsPage extends ConsumerWidget {
             children: [
               _Row(icon: Icons.storefront, label: 'Office', value: office),
               const Divider(height: 1),
-              _Row(icon: Icons.cloud, label: 'Server', value: api),
+              // Names the environment as well as the URL: on a live till this
+              // is the fastest way to confirm the sale you just took went to
+              // the real server and not a developer's laptop.
+              _Row(
+                icon: Api.isLive ? Icons.cloud_done : Icons.cloud_outlined,
+                label: 'Server (${server.name})',
+                value: api,
+              ),
               const Divider(height: 1),
               _Row(
                 icon: Icons.sync,

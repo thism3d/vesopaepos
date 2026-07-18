@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../config/constants.dart';
+
 /// One way to reach Vesopa.
 class _Contact {
   const _Contact({
@@ -28,16 +30,14 @@ class _Contact {
 class AboutPage extends StatelessWidget {
   const AboutPage({super.key});
 
-  static const _phone = '+441792316282';
-  static const _whatsapp = '447501928043';
-  static const _email = 'info@vesopa.com';
-
+  /// Contact details come from [VesopaBrand] so the phone number printed on a
+  /// receipt and the one dialled from this screen can never drift apart.
   static const _contacts = <_Contact>[
     _Contact(
       icon: Icons.phone,
       label: 'Call us',
       value: '+44 1792 316282',
-      uri: 'tel:$_phone',
+      uri: 'tel:${VesopaBrand.phone}',
       colour: Color(0xFF2E7D32),
     ),
     _Contact(
@@ -46,15 +46,14 @@ class AboutPage extends StatelessWidget {
       value: '+44 7501 928043',
       // Pre-filled so the conversation starts with context, matching the
       // prompt already used on vesopaepos.com.
-      uri: 'https://wa.me/$_whatsapp'
-          '?text=Hello%2C%20I%20am%20interested%20in%20Vesopa%20EPOS!',
+      uri: VesopaBrand.whatsAppUrl,
       colour: Color(0xFF25D366),
     ),
     _Contact(
       icon: Icons.mail_outline,
       label: 'Email',
-      value: _email,
-      uri: 'mailto:$_email'
+      value: VesopaBrand.email,
+      uri: 'mailto:${VesopaBrand.email}'
           '?subject=Vesopa%20EPOS%20enquiry'
           '&body=Hello%20Vesopa%20team%2C%0A%0A',
       colour: Color(0xFF1565C0),
@@ -63,26 +62,26 @@ class AboutPage extends StatelessWidget {
       icon: Icons.language,
       label: 'Website',
       value: 'vesopaepos.com',
-      uri: 'https://vesopaepos.com',
+      uri: VesopaBrand.website,
     ),
     _Contact(
       icon: Icons.public,
       label: 'Website (UK)',
       value: 'vesopaepos.co.uk',
-      uri: 'https://vesopaepos.co.uk',
+      uri: VesopaBrand.websiteAlt,
     ),
     _Contact(
       icon: Icons.business_center_outlined,
       label: 'LinkedIn',
       value: 'Vesopa on LinkedIn',
-      uri: 'https://uk.linkedin.com/company/made-to-measure-nutrition',
+      uri: VesopaBrand.linkedIn,
       colour: Color(0xFF0A66C2),
     ),
     _Contact(
       icon: Icons.alternate_email,
       label: 'X',
       value: '@vesopa_uk',
-      uri: 'https://x.com/vesopa_uk',
+      uri: VesopaBrand.x,
       colour: Color(0xFF14171A),
     ),
   ];
@@ -178,7 +177,7 @@ class AboutPage extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Vending · Software · Payments',
+                      VesopaBrand.slogan,
                       style: theme.textTheme.bodySmall
                           ?.copyWith(color: scheme.onSurfaceVariant),
                     ),
@@ -272,7 +271,7 @@ class _Hero extends StatelessWidget {
                 const SizedBox(height: 8),
                 // The company's own slogan.
                 Text(
-                  'Vending · Software · Payments',
+                  VesopaBrand.slogan,
                   textAlign: wide ? TextAlign.start : TextAlign.center,
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w600,
