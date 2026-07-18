@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'data/auth_service.dart';
+import 'data/branding.dart';
+import 'data/commerce.dart';
 import 'data/floor_repository.dart';
 import 'data/local/database.dart';
 import 'data/loyalty_repository.dart';
@@ -163,6 +165,45 @@ final dojoProvider = Provider<PaymentProvider?>((ref) {
   return rest;
 });
 
+/// Card payments where the card is **keyed in** rather than presented.
+///
+/// Deliberately skips the terminal path that [dojoProvider] prefers. A card
+/// machine can only take a card that is physically there; "manual card" is for
+/// a chip that will not read, a telephone order, or a card taken from a
+/// booking — so it routes to the same card-entry product the till used before
+/// readers were supported:
+///
+///   * Android — Dojo's native drop-in SDK, which presents its own card form.
+///   * Desktop — Dojo's hosted checkout in a browser window.
+///
+/// Returns null when Dojo is not configured at all, so the button can be
+/// refused cleanly rather than failing at the moment of payment.
+final manualCardProvider = Provider<PaymentProvider?>((ref) {
+  final config = ref.watch(dojoConfigProvider).value;
+  if (config == null || !config.configured) return null;
+
+  // No terminalId: this provider must never reach for the card machine, even
+  // on a till that has one paired.
+  final rest = DojoProvider(
+    apiKey: config.apiKey.trim(),
+    baseUrl: config.baseUrl,
+    softwareHouseId: config.softwareHouseId.trim().isEmpty
+        ? null
+        : config.softwareHouseId.trim(),
+    resellerId: config.resellerId.trim().isEmpty
+        ? null
+        : config.resellerId.trim(),
+  );
+
+  if (Platform.isAndroid) {
+    return NativeDojoProvider(intents: rest, isSandbox: config.isSandboxKey);
+  }
+  if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+    return DesktopDojoProvider(intents: rest);
+  }
+  return rest;
+});
+
 /// Who is signed into this terminal.
 final sessionProvider = Provider<Session>(
   (ref) => ref.watch(sessionControllerProvider).value ?? Session.empty,
@@ -173,6 +214,87 @@ final sessionProvider = Provider<Session>(
 final officeProvider = Provider<String>(
   (ref) => ref.watch(sessionProvider).office ?? '',
 );
+
+/// What this venue prints on its receipts, owned by the back office.
+final brandingRepositoryProvider = Provider<BrandingRepository>(
+  (ref) => BrandingRepository(
+    apiBase: ref.watch(apiBaseProvider),
+    office: ref.watch(officeProvider),
+  ),
+);
+
+/// The branding a receipt is built from.
+///
+/// Exposed as the plain [Branding] rather than an AsyncValue: printing must
+/// never block on this, so a till that has not loaded it yet prints with
+/// defaults instead of waiting or failing.
+/// Reads whatever branding has already been fetched.
+///
+/// Deliberately pure: it starts no network work of its own, so reading it on
+/// the way to the printer cannot stall a receipt (or, in a test, leave a
+/// pending timer behind). [brandingRefreshProvider] does the fetching.
+final brandingProvider = Provider<Branding>(
+  (ref) => ref.watch(brandingRepositoryProvider).cached ?? const Branding(),
+);
+
+/// Keeps branding current in the background.
+///
+/// Watched once by the shell at startup rather than at print time, and
+/// re-fetched when the back office broadcasts a change, so a new footer or
+/// logo reaches the tills without anyone restarting a terminal.
+final brandingRefreshProvider = FutureProvider<Branding>((ref) async {
+  final office = ref.watch(officeProvider);
+  // Before sign-in there is no venue to fetch for.
+  if (office.isEmpty) return const Branding();
+
+  ref.listen(syncEventsProvider, (_, next) {
+    if (next.value == 'branding') ref.invalidateSelf();
+  });
+
+  final branding = await ref.watch(brandingRepositoryProvider).load();
+  // Publish the freshly cached copy to anything about to print.
+  ref.invalidate(brandingProvider);
+  return branding;
+});
+
+/// Vouchers, gift cards, deposits, loyalty and promotions.
+final commerceRepositoryProvider = Provider<CommerceRepository>(
+  (ref) => CommerceRepository(
+    apiBase: ref.watch(apiBaseProvider),
+    office: ref.watch(officeProvider),
+  ),
+);
+
+/// How this venue takes money. Cached, so the payment screen never waits.
+final tenderSettingsProvider = Provider<TenderSettings>(
+  (ref) => ref.watch(commerceRepositoryProvider).tenderSettings,
+);
+
+/// The offers live right now. Read from cache for the same reason: pricing a
+/// basket happens on every tap and must not touch the network.
+final promotionsProvider = Provider<List<Promotion>>(
+  (ref) => ref.watch(commerceRepositoryProvider).promotions,
+);
+
+/// Pulls tender settings and promotions in the background, and refreshes them
+/// when the back office changes either.
+final commerceRefreshProvider = FutureProvider<void>((ref) async {
+  final office = ref.watch(officeProvider);
+  if (office.isEmpty) return;
+
+  ref.listen(syncEventsProvider, (_, next) {
+    const watched = {'promotions', 'tender.settings', 'loyalty', 'vouchers'};
+    if (watched.contains(next.value)) ref.invalidateSelf();
+  });
+
+  final repo = ref.watch(commerceRepositoryProvider);
+  await repo.loadTenderSettings();
+  await repo.loadPromotions();
+
+  // Publish the freshly cached copies to anything about to price a basket.
+  ref.invalidate(tenderSettingsProvider);
+  ref.invalidate(promotionsProvider);
+});
 
 final syncServiceProvider = Provider<SyncService>((ref) {
   final sync = SyncService(

@@ -106,6 +106,18 @@ flutter:
 
   assets:
     - assets/brand/
+    # Receipt fonts. Listed file-by-file rather than as a directory so a stray
+    # TTF dropped in later cannot quietly grow the bundle. These are read with
+    # rootBundle.load() by ReceiptFonts, so they are assets, not a `fonts:`
+    # family — the PDF package parses the TTF itself and never asks Flutter's
+    # font system for them.
+    #
+    # Without these the built-in Helvetica silently drops "£" and every
+    # non-Latin-1 character. Do not remove them to save space.
+    - assets/fonts/OpenSans-Regular.ttf
+    - assets/fonts/OpenSans-Bold.ttf
+    - assets/fonts/OpenSans-Italic.ttf
+    - assets/fonts/OFL.txt
 
 # App icon for every platform, generated from the Vesopa mark.
 flutter_launcher_icons:

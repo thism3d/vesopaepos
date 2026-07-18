@@ -1,195 +1,292 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import 'layout.dart';
-import 'theme.dart';
+/// One way to reach Vesopa.
+class _Contact {
+  const _Contact({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.uri,
+    this.colour,
+  });
 
-/// About Vesopa EPOS — the brand mark, a tagline, a short description of what
-/// the till is, the headline features, and links out to the web and socials.
+  final IconData icon;
+  final String label;
+  final String value;
+
+  /// A real scheme (tel:, mailto:, https:) so the device opens the dialler,
+  /// the mail app, or the installed app rather than a browser tab.
+  final String uri;
+  final Color? colour;
+}
+
+/// About Vesopa: who made the till, and how to reach them.
 ///
-/// Replaces the old plain placeholder. Social links open in the device browser;
-/// a link that cannot be opened is reported rather than silently doing nothing.
+/// Every contact opens the right app rather than showing a string to copy — a
+/// venue with a problem mid-service should be one tap from a phone call.
 class AboutPage extends StatelessWidget {
   const AboutPage({super.key});
 
-  static const _tagline = 'Point of sale that never stops trading.';
-  static const _brief =
-      'Vesopa EPOS is an offline-first till. Every sale is written to this '
-      'terminal first and synced to the back office when the network allows, so '
-      'you keep serving customers whether the internet is up or not. Products, '
-      'prices, staff and the floor plan are managed centrally and pushed to '
-      'every till the moment they change.';
+  static const _phone = '+441792316282';
+  static const _whatsapp = '447501928043';
+  static const _email = 'info@vesopa.com';
 
-  static const _features = [
-    ('Works fully offline', Icons.cloud_off,
-        'Sales queue locally and sync automatically when you are back online.'),
-    ('Live back office', Icons.sync,
-        'Price, product and floor changes reach every till instantly over a live connection.'),
-    ('Card payments', Icons.credit_card,
-        'Take card via Dojo, alongside cash, split and partial tenders.'),
-    ('Tables & kitchen', Icons.restaurant,
-        'Park bills to tables, split and transfer, and print orders to the kitchen.'),
+  static const _contacts = <_Contact>[
+    _Contact(
+      icon: Icons.phone,
+      label: 'Call us',
+      value: '+44 1792 316282',
+      uri: 'tel:$_phone',
+      colour: Color(0xFF2E7D32),
+    ),
+    _Contact(
+      icon: Icons.chat,
+      label: 'WhatsApp',
+      value: '+44 7501 928043',
+      // Pre-filled so the conversation starts with context, matching the
+      // prompt already used on vesopaepos.com.
+      uri: 'https://wa.me/$_whatsapp'
+          '?text=Hello%2C%20I%20am%20interested%20in%20Vesopa%20EPOS!',
+      colour: Color(0xFF25D366),
+    ),
+    _Contact(
+      icon: Icons.mail_outline,
+      label: 'Email',
+      value: _email,
+      uri: 'mailto:$_email'
+          '?subject=Vesopa%20EPOS%20enquiry'
+          '&body=Hello%20Vesopa%20team%2C%0A%0A',
+      colour: Color(0xFF1565C0),
+    ),
+    _Contact(
+      icon: Icons.language,
+      label: 'Website',
+      value: 'vesopaepos.com',
+      uri: 'https://vesopaepos.com',
+    ),
+    _Contact(
+      icon: Icons.public,
+      label: 'Website (UK)',
+      value: 'vesopaepos.co.uk',
+      uri: 'https://vesopaepos.co.uk',
+    ),
+    _Contact(
+      icon: Icons.business_center_outlined,
+      label: 'LinkedIn',
+      value: 'Vesopa on LinkedIn',
+      uri: 'https://uk.linkedin.com/company/made-to-measure-nutrition',
+      colour: Color(0xFF0A66C2),
+    ),
+    _Contact(
+      icon: Icons.alternate_email,
+      label: 'X',
+      value: '@vesopa_uk',
+      uri: 'https://x.com/vesopa_uk',
+      colour: Color(0xFF14171A),
+    ),
   ];
 
-  static const _socials = [
-    ('Website', Icons.language, 'https://vesopaepos.store'),
-    ('Instagram', Icons.camera_alt, 'https://instagram.com/vesopaepos'),
-    ('Facebook', Icons.facebook, 'https://facebook.com/vesopaepos'),
-    ('Support', Icons.email, 'mailto:support@vesopaepos.store'),
-  ];
+  Future<void> _open(BuildContext context, _Contact contact) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final ok = await launchUrl(
+        Uri.parse(contact.uri),
+        mode: LaunchMode.externalApplication,
+      );
+      if (!ok) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('${contact.label}: ${contact.value}')),
+        );
+      }
+    } catch (_) {
+      // A till with no dialler or no browser must not crash on a tap; show the
+      // detail instead so the clerk can still act on it.
+      messenger.showSnackBar(
+        SnackBar(content: Text('${contact.label}: ${contact.value}')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final phone = context.isPhone;
-    final onVariant = Theme.of(context).colorScheme.onSurfaceVariant;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final wide = MediaQuery.sizeOf(context).width >= 720;
 
     return SingleChildScrollView(
-      padding: EdgeInsets.all(phone ? 20 : 32),
+      padding: const EdgeInsets.all(24),
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 640),
+          constraints: const BoxConstraints(maxWidth: 820),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Brand header.
+              _Hero(wide: wide),
+              const SizedBox(height: 26),
+
+              Text('What Vesopa does',
+                  style: theme.textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              Text(
+                'Vesopa builds vending, software and payment systems for '
+                'hospitality and retail. This till is the front of that: it '
+                'keeps selling when the network does not, syncs every sale back '
+                'to the back office, and takes card payments through Dojo — on '
+                'the counter or on a reader.',
+                style: theme.textTheme.bodyMedium
+                    ?.copyWith(color: scheme.onSurfaceVariant, height: 1.5),
+              ),
+              const SizedBox(height: 22),
+
+              const _Features(),
+              const SizedBox(height: 26),
+
+              Text('Get in touch',
+                  style: theme.textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 12),
+
+              // Two columns where there is room, one where there is not.
+              GridView.count(
+                crossAxisCount: wide ? 2 : 1,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                mainAxisSpacing: 10,
+                crossAxisSpacing: 10,
+                childAspectRatio: wide ? 5.2 : 5.6,
+                children: [
+                  for (final contact in _contacts)
+                    _ContactTile(
+                      contact: contact,
+                      onTap: () => _open(context, contact),
+                    ),
+                ],
+              ),
+
+              const SizedBox(height: 28),
               Center(
                 child: Column(
                   children: [
-                    Image.asset(
-                      Theme.of(context).brightness == Brightness.dark
-                          ? 'assets/brand/vesopa_logo_monochrome.png'
-                          : 'assets/brand/vesopa_logo.png',
-                      height: 54,
-                      errorBuilder: (_, _, _) => Text(
-                        'Vesopa EPOS',
-                        style: TextStyle(
-                          fontSize: 28,
-                          fontWeight: FontWeight.w800,
-                          color: Pos.brand,
-                        ),
+                    Text(
+                      'VESOPA EPOS',
+                      style: theme.textTheme.labelLarge?.copyWith(
+                        letterSpacing: 2,
+                        color: scheme.onSurfaceVariant,
                       ),
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 4),
                     Text(
-                      _tagline,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontStyle: FontStyle.italic,
-                        color: Pos.brand,
-                        fontWeight: FontWeight.w600,
+                      'Vending · Software · Payments',
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: scheme.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      '© ${DateTime.now().year} Vesopa EPOS Limited',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant.withValues(alpha: 0.7),
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 28),
-
-              Text(
-                _brief,
-                style: TextStyle(fontSize: 15, height: 1.55, color: onVariant),
-              ),
-              const SizedBox(height: 26),
-
-              const Text(
-                'What it does',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 12),
-              for (final (title, icon, body) in _features)
-                _FeatureRow(title: title, icon: icon, body: body),
-
-              const SizedBox(height: 26),
-              const Text(
-                'Connect',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                children: [
-                  for (final (label, icon, url) in _socials)
-                    _SocialChip(
-                      label: label,
-                      icon: icon,
-                      onTap: () => _open(context, url),
-                    ),
-                ],
-              ),
-
-              const SizedBox(height: 30),
-              Center(
-                child: Text(
-                  'Vesopa EPOS · version 1.0.0\n© ${DateTime.now().year} Vesopa',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 12.5, height: 1.5, color: onVariant),
-                ),
-              ),
+              const SizedBox(height: 20),
             ],
           ),
         ),
       ),
     );
   }
-
-  Future<void> _open(BuildContext context, String url) async {
-    final uri = Uri.parse(url);
-    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-    if (!ok && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not open $url')),
-      );
-    }
-  }
 }
 
-class _FeatureRow extends StatelessWidget {
-  const _FeatureRow({
-    required this.title,
-    required this.icon,
-    required this.body,
-  });
+class _Hero extends StatelessWidget {
+  const _Hero({required this.wide});
 
-  final String title;
-  final IconData icon;
-  final String body;
+  final bool wide;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Container(
+      padding: EdgeInsets.all(wide ? 30 : 22),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            scheme.primaryContainer,
+            scheme.primaryContainer.withValues(alpha: 0.55),
+          ],
+        ),
+      ),
+      child: Flex(
+        direction: wide ? Axis.horizontal : Axis.vertical,
+        crossAxisAlignment:
+            wide ? CrossAxisAlignment.center : CrossAxisAlignment.stretch,
         children: [
+          // The mark. Falls back to a monogram if the asset is missing, so a
+          // stripped build still renders something sensible.
           Container(
-            width: 40,
-            height: 40,
+            width: wide ? 132 : double.infinity,
+            height: wide ? 132 : 96,
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: Pos.brandSoft,
-              borderRadius: BorderRadius.circular(10),
+              color: scheme.surface,
+              borderRadius: BorderRadius.circular(14),
             ),
-            child: Icon(icon, size: 20, color: Pos.brand),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
+            child: Image.asset(
+              'assets/brand/vesopa_logo.png',
+              fit: BoxFit.contain,
+              errorBuilder: (_, _, _) => Center(
+                child: Text(
+                  'V',
+                  style: theme.textTheme.displayMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
+                    color: scheme.primary,
                   ),
                 ),
-                const SizedBox(height: 2),
+              ),
+            ),
+          ),
+          SizedBox(width: wide ? 26 : 0, height: wide ? 0 : 18),
+          Expanded(
+            flex: wide ? 1 : 0,
+            child: Column(
+              crossAxisAlignment:
+                  wide ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
                 Text(
-                  body,
-                  style: TextStyle(
-                    fontSize: 13,
-                    height: 1.4,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  'VESOPA EPOS',
+                  style: theme.textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.4,
+                    color: scheme.onPrimaryContainer,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                // The company's own slogan.
+                Text(
+                  'Vending · Software · Payments',
+                  textAlign: wide ? TextAlign.start : TextAlign.center,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onPrimaryContainer.withValues(alpha: 0.92),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Point of sale that never stops trading — offline-first, '
+                  'card-ready, and built for the counter.',
+                  textAlign: wide ? TextAlign.start : TextAlign.center,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: scheme.onPrimaryContainer.withValues(alpha: 0.85),
+                    height: 1.45,
                   ),
                 ),
               ],
@@ -201,40 +298,129 @@ class _FeatureRow extends StatelessWidget {
   }
 }
 
-class _SocialChip extends StatelessWidget {
-  const _SocialChip({
-    required this.label,
-    required this.icon,
-    required this.onTap,
-  });
+class _Features extends StatelessWidget {
+  const _Features();
 
-  final String label;
-  final IconData icon;
+  static const _items = <(IconData, String, String)>[
+    (Icons.cloud_off, 'Offline-first',
+        'Sales are written here first and synced when the network returns.'),
+    (Icons.credit_card, 'Card payments',
+        'Dojo on a reader at the counter, or on the device itself.'),
+    (Icons.print_outlined, 'Thermal printing',
+        'Receipts and kitchen tickets on 80mm or 58mm rolls.'),
+    (Icons.table_restaurant_outlined, 'Tables & bills',
+        'Park, recall, transfer and split a bill any way the table wants.'),
+    (Icons.loyalty_outlined, 'Loyalty & offers',
+        'Points, tiers, vouchers, gift cards and multi-buy deals.'),
+    (Icons.insights_outlined, 'Live back office',
+        'Every sale on the dashboard the moment it is rung up.'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final wide = MediaQuery.sizeOf(context).width >= 720;
+
+    return GridView.count(
+      crossAxisCount: wide ? 2 : 1,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      mainAxisSpacing: 10,
+      crossAxisSpacing: 10,
+      childAspectRatio: wide ? 4.4 : 5.0,
+      children: [
+        for (final (icon, title, detail) in _items)
+          Container(
+            padding: const EdgeInsets.all(13),
+            decoration: BoxDecoration(
+              border: Border.all(color: scheme.outlineVariant),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(icon, size: 19, color: scheme.primary),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(title,
+                          style: theme.textTheme.bodyMedium
+                              ?.copyWith(fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 2),
+                      Text(
+                        detail,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _ContactTile extends StatelessWidget {
+  const _ContactTile({required this.contact, required this.onTap});
+
+  final _Contact contact;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final accent = contact.colour ?? scheme.primary;
+
     return Material(
-      color: Pos.brandSoft,
-      borderRadius: BorderRadius.circular(24),
+      color: scheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(11),
       child: InkWell(
-        borderRadius: BorderRadius.circular(24),
         onTap: onTap,
+        borderRadius: BorderRadius.circular(11),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           child: Row(
-            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 18, color: Pos.brand),
-              const SizedBox(width: 8),
-              Text(
-                label,
-                style: TextStyle(
-                  color: Pos.brand,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Icon(contact.icon, size: 19, color: accent),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      contact.label,
+                      style: theme.textTheme.labelSmall
+                          ?.copyWith(color: scheme.onSurfaceVariant),
+                    ),
+                    Text(
+                      contact.value,
+                      style: theme.textTheme.bodyMedium
+                          ?.copyWith(fontWeight: FontWeight.w600),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
                 ),
               ),
+              Icon(Icons.open_in_new, size: 15, color: scheme.outline),
             ],
           ),
         ),

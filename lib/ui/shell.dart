@@ -9,6 +9,7 @@ import 'about_page.dart';
 import 'functions_page.dart';
 import 'logout_dialog.dart';
 import 'placeholder_page.dart';
+import 'products_page.dart';
 import 'settings_page.dart';
 import 'receipts_page.dart';
 import 'reports_page.dart';
@@ -69,6 +70,13 @@ class _PosShellState extends ConsumerState<PosShell> {
 
   @override
   Widget build(BuildContext context) {
+    // Pull the venue's receipt branding down once the till is running, so the
+    // first receipt of the day already carries the logo and footer. Watched
+    // here rather than at print time: printing must read a cache, never wait
+    // on the network.
+    ref.watch(brandingRefreshProvider);
+    ref.watch(commerceRefreshProvider);
+
     final orderId = _orderId;
     final body = orderId == null
         ? const Center(child: CircularProgressIndicator())
@@ -166,6 +174,8 @@ class _PosShellState extends ConsumerState<PosShell> {
         return const SettingsPage();
       case 'Reports':
         return const ReportsPage();
+      case 'Product':
+        return const ProductsPage();
       case 'Functions':
         return FunctionsPage(
           orderId: orderId,

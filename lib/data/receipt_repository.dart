@@ -11,6 +11,16 @@ class ReceiptSummary {
     required this.discountMinor,
     required this.closedAt,
     this.tableNumber,
+    this.customerName,
+    this.voucherCode,
+    this.voucherMinor = 0,
+    this.serviceMinor = 0,
+    this.pointsEarned = 0,
+    this.pointsRedeemed = 0,
+    this.pointsBalance,
+    this.clerkName,
+    this.orderNote,
+    this.covers,
   });
 
   final String id;
@@ -20,14 +30,48 @@ class ReceiptSummary {
   final DateTime closedAt;
   final int? tableNumber;
 
+  /// Receipt context. All optional: a walk-in cash sale has none of it, and
+  /// sales taken before these were recorded still render.
+  final String? customerName;
+  final String? voucherCode;
+  final int voucherMinor;
+  final int serviceMinor;
+  final int pointsEarned;
+
+  /// Points spent on this sale, shown alongside what was earned.
+  final int pointsRedeemed;
+  final int? pointsBalance;
+  final String? clerkName;
+  final String? orderNote;
+  final int? covers;
+
+  bool get hasVoucher => voucherMinor > 0 || (voucherCode?.isNotEmpty ?? false);
+
+  /// What the goods came to before discounts, vouchers and service.
+  int get grossMinor =>
+      totalMinor + discountMinor + voucherMinor - serviceMinor;
+
+  // MySQL sends INTs as num; a value written by an older till may be absent.
+  static int _int(Object? v) => (v as num?)?.toInt() ?? 0;
+
   factory ReceiptSummary.fromJson(Map<String, dynamic> j) => ReceiptSummary(
         id: j['id'] as String,
-        totalMinor: j['total_minor'] as int? ?? 0,
-        taxMinor: j['tax_minor'] as int? ?? 0,
-        discountMinor: j['discount_minor'] as int? ?? 0,
-        tableNumber: j['table_number'] as int?,
+        totalMinor: _int(j['total_minor']),
+        taxMinor: _int(j['tax_minor']),
+        discountMinor: _int(j['discount_minor']),
+        tableNumber: (j['table_number'] as num?)?.toInt(),
         closedAt:
             DateTime.tryParse(j['closed_at'] as String? ?? '') ?? DateTime.now(),
+        customerName: j['customer_name'] as String?,
+        voucherCode: j['voucher_code'] as String?,
+        voucherMinor: _int(j['voucher_minor']),
+        serviceMinor: _int(j['service_minor']),
+        pointsEarned: _int(j['points_earned']),
+        pointsRedeemed: _int(j['points_redeemed']),
+        pointsBalance: (j['points_balance'] as num?)?.toInt(),
+        clerkName: j['clerk_name'] as String?,
+        orderNote: j['order_note'] as String? ?? j['notes'] as String?,
+        covers: (j['covers'] as num?)?.toInt(),
       );
 }
 
@@ -36,16 +80,32 @@ class ReceiptLine {
     required this.name,
     required this.quantity,
     required this.unitPriceMinor,
+    this.note,
+    this.taxPercentage = 0,
   });
 
   final String name;
   final double quantity;
   final int unitPriceMinor;
 
+  /// Kitchen instruction for this line ("no onions"). Prints indented under
+  /// the item on both the customer receipt and the kitchen ticket.
+  final String? note;
+
+  /// Kept per line so the receipt can show a VAT breakdown by rate, which is
+  /// what a VAT-registered venue's receipt has to do.
+  final double taxPercentage;
+
+  int get lineTotalMinor => (unitPriceMinor * quantity).round();
+
   factory ReceiptLine.fromJson(Map<String, dynamic> j) => ReceiptLine(
         name: j['name'] as String? ?? '',
         quantity: (j['quantity'] as num? ?? 1).toDouble(),
-        unitPriceMinor: j['unit_price_minor'] as int? ?? 0,
+        unitPriceMinor: (j['unit_price_minor'] as num?)?.toInt() ?? 0,
+        note: (j['note'] as String?)?.trim().isEmpty ?? true
+            ? null
+            : j['note'] as String,
+        taxPercentage: (j['tax_percentage'] as num? ?? 0).toDouble(),
       );
 }
 

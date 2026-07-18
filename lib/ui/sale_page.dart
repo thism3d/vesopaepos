@@ -15,7 +15,10 @@ import 'tables_page.dart' show parkedOrdersProvider;
 import 'theme.dart';
 import 'void_dialog.dart';
 import 'widgets/action_bar.dart';
+import '../data/commerce.dart';
+import '../data/pricing_engine.dart';
 import 'widgets/basket_panel.dart';
+import 'widgets/live_receipt.dart';
 import 'widgets/line_editor.dart';
 
 /// Live catalogue, straight from the local database so the grid renders with
@@ -116,6 +119,8 @@ class SalePage extends ConsumerWidget {
               products: visible,
               color: Pos.categoryColor(selected ?? ''),
               onTap: (p) => repo.addLine(orderId, p),
+              promotions:
+                  PricingEngine(promotions: ref.watch(promotionsProvider)),
             );
 
             void selectCategory(String c) =>
@@ -157,22 +162,50 @@ class SalePage extends ConsumerWidget {
                         )
                       : Row(
                           children: [
-                            BasketPanel(
-                              lines: lines,
-                              order: order,
-                              // Named deals, so the customer can see why the
-                              // total dropped.
-                              deals:
-                                  ref.watch(dealsProvider(orderId)).value ??
-                                  MixMatchResult.none,
-                              onTapLine: (l) => showLineEditor(
-                                context,
-                                ref,
-                                orderId: orderId,
-                                line: l,
+                            // The bill as the receipt it will become, so the
+                            // clerk (and the customer leaning over the counter)
+                            // watch it build as items are rung up — and what is
+                            // approved here is exactly what prints.
+                            SizedBox(
+                              width: 340,
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(10, 10, 4, 10),
+                                child: LiveReceipt(
+                                  totals: PricingEngine(
+                                    promotions: ref.watch(promotionsProvider),
+                                  ).price([
+                                    for (final l in lines)
+                                      PricedLine(
+                                        id: l.id,
+                                        pluid: l.pluId,
+                                        name: l.name,
+                                        quantity: l.quantity,
+                                        unitPriceMinor: l.unitPriceMinor,
+                                        taxPercentage: l.taxPercentage,
+                                        note: l.notes,
+                                      ),
+                                  ]),
+                                  branding: ref.watch(brandingProvider),
+                                  tableNumber: order?.tableNumber,
+                                  covers: order?.covers,
+                                  customerName: order?.customerName,
+                                  emptyMessage: 'Ring up an item to start',
+                                  onTapLine: (l) {
+                                    final line = lines.firstWhere(
+                                      (x) => x.id == l.id,
+                                      orElse: () => lines.first,
+                                    );
+                                    showLineEditor(
+                                      context,
+                                      ref,
+                                      orderId: orderId,
+                                      line: line,
+                                    );
+                                  },
+                                  onRemoveLine: (l) =>
+                                      repo.removeLine(orderId, l.id),
+                                ),
                               ),
-                              onRemoveLine: (l) =>
-                                  repo.removeLine(orderId, l.id),
                             ),
                             Expanded(child: grid),
                             _CategoryRail(
@@ -391,11 +424,15 @@ class _ProductGrid extends StatelessWidget {
     required this.products,
     required this.color,
     required this.onTap,
+    required this.promotions,
   });
 
   final List<Product> products;
   final Color color;
   final void Function(Product) onTap;
+
+  /// Prices the offers so a discounted product can be flagged on its button.
+  final PricingEngine promotions;
 
   @override
   Widget build(BuildContext context) {
@@ -429,6 +466,13 @@ class _ProductGrid extends StatelessWidget {
         // The price is part of the button on every platform — a till button
         // without a price makes the clerk guess.
         showPrice: true,
+        // An offer running on this product right now, so the clerk can see it
+        // is discounted before ringing it up rather than after.
+        promotion: promotions.badgeFor(
+          pluid: products[i].pluId,
+          department: products[i].departmentName,
+          group: products[i].groupName,
+        ),
         onTap: () => onTap(products[i]),
       ),
     );
@@ -448,12 +492,56 @@ class _ProductTile extends StatelessWidget {
     required this.color,
     required this.showPrice,
     required this.onTap,
+    this.promotion,
   });
 
   final Product product;
   final Color color;
   final bool showPrice;
   final VoidCallback onTap;
+
+  /// The offer covering this product now, if any.
+  final Promotion? promotion;
+
+  /// Layers the offer flash over a finished tile, when one applies.
+  Widget _withBadge(Widget tile) {
+    final badge = _badge;
+    if (badge == null) return tile;
+    return Stack(
+      // The badge deliberately sits inside the tile bounds so a grid with
+      // tight spacing does not clip it.
+      children: [Positioned.fill(child: tile), badge],
+    );
+  }
+
+  /// The offer flash, pinned to the tile's top-right corner.
+  Widget? get _badge {
+    final promo = promotion;
+    if (promo == null || (promo.badgeText?.isEmpty ?? true)) return null;
+    return Positioned(
+      top: 6,
+      right: 6,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        decoration: BoxDecoration(
+          color: Pos.parseColor(promo.badgeColour) ?? const Color(0xFFD81B60),
+          borderRadius: BorderRadius.circular(5),
+          boxShadow: const [
+            BoxShadow(color: Color(0x33000000), blurRadius: 4, offset: Offset(0, 1)),
+          ],
+        ),
+        child: Text(
+          promo.badgeText!,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 10,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.3,
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -465,7 +553,7 @@ class _ProductTile extends StatelessWidget {
     // whatever the image is. The clerk recognises the item by sight but never
     // has to guess what it costs.
     if (hasImage) {
-      return _PressableTile(
+      return _withBadge(_PressableTile(
         onTap: onTap,
         child: Material(
           color: color,
@@ -566,10 +654,10 @@ class _ProductTile extends StatelessWidget {
             ),
           ),
         ),
-      );
+      ));
     }
 
-    return _PressableTile(
+    return _withBadge(_PressableTile(
       onTap: onTap,
       child: Material(
         color: color,
@@ -619,7 +707,7 @@ class _ProductTile extends StatelessWidget {
           ),
         ),
       ),
-    );
+    ));
   }
 }
 

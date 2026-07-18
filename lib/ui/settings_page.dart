@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../main.dart';
 import '../payments/dojo_config.dart';
 import '../payments/payment_provider.dart';
+import 'printers_page.dart';
 import 'theme.dart';
 import 'theme_controller.dart';
 
@@ -114,24 +115,60 @@ class SettingsPage extends ConsumerWidget {
 
         const SizedBox(height: 28),
         const _SectionTitle('Printing'),
-        const Card(
+        Card(
           margin: EdgeInsets.zero,
-          child: Padding(
-            padding: EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Icon(Icons.print, color: Pos.brand),
-                SizedBox(width: 14),
-                Expanded(
-                  child: Text(
-                    'Receipt and kitchen printers are configured per venue. '
-                    'Network printers work on every platform; serial (COM) '
-                    'printers are desktop only.',
-                    style: TextStyle(fontSize: 13, height: 1.4),
-                  ),
+          child: Column(
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Row(
+                  children: [
+                    Icon(Icons.print, color: Pos.brand),
+                    SizedBox(width: 14),
+                    Expanded(
+                      child: Text(
+                        'Printers belong to this terminal, because they are '
+                        'plugged into it. Set the roll width to match the paper '
+                        'loaded — 80mm or 58mm.',
+                        style: TextStyle(fontSize: 13, height: 1.4),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              // Live summary of what is actually configured, so a missing
+              // kitchen printer is visible without opening the page.
+              Consumer(
+                builder: (context, ref, _) {
+                  final settings = ref.watch(printerSettingsProvider).value;
+                  final receipt = settings?.receiptPrinter;
+                  final kitchen = settings?.kitchenPrinter;
+                  return ListTile(
+                    leading: const Icon(Icons.settings_outlined),
+                    title: const Text('Set up printers'),
+                    subtitle: Text(
+                      [
+                        receipt == null
+                            ? 'No receipt printer'
+                            : 'Receipt: ${receipt.name} (${receipt.paperWidthMm}mm)',
+                        kitchen == null
+                            ? 'No kitchen printer'
+                            : 'Kitchen: ${kitchen.name} (${kitchen.paperWidthMm}mm)',
+                      ].join('  ·  '),
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => Scaffold(
+                          appBar: AppBar(title: const Text('Printers')),
+                          body: const PrintersPage(),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
           ),
         ),
       ],
