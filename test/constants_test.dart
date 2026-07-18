@@ -48,13 +48,15 @@ void main() {
       expect(liveServer.apiBase, isNot(localServer.apiBase));
     });
 
-    test('defaults to local, so a stray build cannot hit production', () {
+    test('defaults to live, so a build with no define ships to production', () {
       // If this ever fails, someone has flipped the default. That is a
-      // deliberate act and the test should be updated deliberately too.
-      expect(useLiveServer, isFalse,
-          reason: 'default build should target the dev server');
-      expect(Api.isLive, isFalse);
-      expect(Api.base, localServer.apiBase);
+      // deliberate act and the test should be updated deliberately too. A
+      // developer working locally must now pass
+      // --dart-define=USE_LIVE_SERVER=false explicitly.
+      expect(useLiveServer, isTrue,
+          reason: 'default build should target the live server');
+      expect(Api.isLive, isTrue);
+      expect(Api.base, liveServer.apiBase);
     });
   });
 

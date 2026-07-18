@@ -16,13 +16,14 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 /// server from its own settings screen is a till that can be pointed at the
 /// wrong one during a shift.
 ///
-/// A build-time define still wins, so CI can produce both flavours from the
-/// same source without editing this file:
+/// A build-time define still wins, so CI (or a developer) can produce the
+/// other flavour from the same source without editing this file — the default
+/// below is live, so it is the *local* build that now needs the define:
 ///
-///     flutter build apk --dart-define=USE_LIVE_SERVER=true
+///     flutter build apk --dart-define=USE_LIVE_SERVER=false
 const bool useLiveServer = bool.fromEnvironment(
   'USE_LIVE_SERVER',
-  defaultValue: false,
+  defaultValue: true,
 );
 
 /// Server endpoints, one set per environment.
