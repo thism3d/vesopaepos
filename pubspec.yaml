@@ -53,17 +53,20 @@ dependencies:
   pdf: ^3.12.0
   printing: ^5.14.3
   url_launcher: ^6.3.0
-  # In-app card entry. The hosted checkout is rendered inside the till rather
-  # than handed to the system browser: a clerk who has to alt-tab to another
-  # window mid-service loses the sale on screen, and on a kiosked Windows till
-  # there may be no browser to hand it to at all.
+  # In-app card entry (TEMPORARILY DISABLED — see lib/ui/card_checkout_page.dart).
+  # The hosted checkout is meant to render inside the till rather than being
+  # handed to the system browser: a clerk who has to alt-tab to another window
+  # mid-service loses the sale on screen, and on a kiosked Windows till there
+  # may be no browser to hand it to at all.
   #
   # Two packages because there is no one webview: `webview_flutter` is the
   # first-party Android/iOS one, `webview_windows` wraps WebView2 on the desktop
-  # till. Both are optional at runtime — see CardCheckoutPage, which falls back
-  # to the system browser if either fails to start.
-  webview_flutter: ^4.13.0
-  webview_windows: ^0.4.0
+  # till. webview_windows 0.4.0's CMake step (NuGet fetch + WebView2 SDK) is
+  # currently blocking Windows builds, so both are commented out together —
+  # not removed — until that is sorted. The till falls back to the system
+  # browser for card checkout in the meantime; nothing else depends on these.
+  # webview_flutter: ^4.13.0
+  # webview_windows: ^0.4.0
 
 dev_dependencies:
   flutter_test:

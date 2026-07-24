@@ -1,10 +1,14 @@
 import 'dart:async';
-import 'dart:io' show Platform;
+// Only used by the disabled webview branches below (`_start()`).
+// import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:webview_flutter/webview_flutter.dart';
-import 'package:webview_windows/webview_windows.dart' as win;
+// TEMPORARILY DISABLED — see the note by `_start()` below. Restoring the
+// in-app webview means uncommenting these two imports, the matching packages
+// in pubspec.yaml, and the commented-out blocks further down this file.
+// import 'package:webview_flutter/webview_flutter.dart';
+// import 'package:webview_windows/webview_windows.dart' as win;
 
 import 'theme.dart';
 
@@ -54,23 +58,29 @@ class CardCheckoutPage extends StatefulWidget {
     ),
   );
 
-  /// Whether this platform can host the page in-app at all. iOS/Android and
-  /// Windows can; anything else falls back to the system browser.
-  static bool get supported =>
-      Platform.isAndroid || Platform.isIOS || Platform.isWindows;
+  /// Whether this platform can host the page in-app at all.
+  ///
+  /// TEMPORARILY `false` everywhere — the embedded webview is disabled, see
+  /// `_start()`. iOS/Android and Windows normally could; restore the line
+  /// below once the webview packages are back in pubspec.yaml.
+  static bool get supported => false;
+  // Platform.isAndroid || Platform.isIOS || Platform.isWindows;
 
   @override
   State<CardCheckoutPage> createState() => _CardCheckoutPageState();
 }
 
 class _CardCheckoutPageState extends State<CardCheckoutPage> {
-  /// Android/iOS.
-  WebViewController? _mobile;
+  // TEMPORARILY DISABLED, along with everything else in this file that
+  // touches webview_flutter/webview_windows — see `_start()`.
+  // /// Android/iOS.
+  // WebViewController? _mobile;
+  //
+  // /// Windows (WebView2).
+  // win.WebviewController? _desktop;
 
-  /// Windows (WebView2).
-  win.WebviewController? _desktop;
-
-  bool _loading = true;
+  // Only read by the disabled webview body in build() below.
+  // bool _loading = true;
 
   /// Set when the embedded view cannot start — no WebView2 runtime on the
   /// Windows box, say. The page then offers the browser rather than showing a
@@ -83,51 +93,67 @@ class _CardCheckoutPageState extends State<CardCheckoutPage> {
     unawaited(_start());
   }
 
+  // TEMPORARILY DISABLED: webview_windows 0.4.0's CMake step (NuGet fetch +
+  // WebView2 SDK download) is blocking Windows builds, so the embedded
+  // webview is off on every platform for now rather than only on Windows —
+  // this file drives both from the one code path. Nothing is deleted: the
+  // real implementation is commented out below `_start()`'s body, ready to
+  // restore once webview_windows is sorted (see pubspec.yaml). Meanwhile the
+  // page falls straight to the same "open in a browser" screen it already
+  // used for genuine webview failures, so card checkout keeps working.
   Future<void> _start() async {
-    try {
-      if (Platform.isWindows) {
-        final controller = win.WebviewController();
-        await controller.initialize();
-        await controller.loadUrl(widget.url);
-        if (!mounted) {
-          await controller.dispose();
-          return;
-        }
-        setState(() {
-          _desktop = controller;
-          _loading = false;
-        });
-      } else if (Platform.isAndroid || Platform.isIOS) {
-        final controller = WebViewController()
-          ..setJavaScriptMode(JavaScriptMode.unrestricted)
-          ..setNavigationDelegate(
-            NavigationDelegate(
-              onPageFinished: (_) {
-                if (mounted) setState(() => _loading = false);
-              },
-              onWebResourceError: (e) {
-                // A sub-resource failing is normal on a payment page; only a
-                // failure of the page itself is worth surfacing.
-                if (e.isForMainFrame == true && mounted) {
-                  setState(() => _unavailable = e.description);
-                }
-              },
-            ),
-          )
-          ..loadRequest(Uri.parse(widget.url));
-        if (!mounted) return;
-        setState(() => _mobile = controller);
-      } else {
-        setState(() => _unavailable = 'No in-app browser on this platform.');
-      }
-    } catch (e) {
-      if (mounted) setState(() => _unavailable = '$e');
-    }
+    setState(
+      () => _unavailable =
+          'In-app card checkout is switched off for now — opening in your '
+          'browser instead.',
+    );
   }
+
+  // Future<void> _start() async {
+  //   try {
+  //     if (Platform.isWindows) {
+  //       final controller = win.WebviewController();
+  //       await controller.initialize();
+  //       await controller.loadUrl(widget.url);
+  //       if (!mounted) {
+  //         await controller.dispose();
+  //         return;
+  //       }
+  //       setState(() {
+  //         _desktop = controller;
+  //         _loading = false;
+  //       });
+  //     } else if (Platform.isAndroid || Platform.isIOS) {
+  //       final controller = WebViewController()
+  //         ..setJavaScriptMode(JavaScriptMode.unrestricted)
+  //         ..setNavigationDelegate(
+  //           NavigationDelegate(
+  //             onPageFinished: (_) {
+  //               if (mounted) setState(() => _loading = false);
+  //             },
+  //             onWebResourceError: (e) {
+  //               // A sub-resource failing is normal on a payment page; only a
+  //               // failure of the page itself is worth surfacing.
+  //               if (e.isForMainFrame == true && mounted) {
+  //                 setState(() => _unavailable = e.description);
+  //               }
+  //             },
+  //           ),
+  //         )
+  //         ..loadRequest(Uri.parse(widget.url));
+  //       if (!mounted) return;
+  //       setState(() => _mobile = controller);
+  //     } else {
+  //       setState(() => _unavailable = 'No in-app browser on this platform.');
+  //     }
+  //   } catch (e) {
+  //     if (mounted) setState(() => _unavailable = '$e');
+  //   }
+  // }
 
   @override
   void dispose() {
-    unawaited(_desktop?.dispose());
+    // unawaited(_desktop?.dispose());
     super.dispose();
   }
 
@@ -155,18 +181,22 @@ class _CardCheckoutPageState extends State<CardCheckoutPage> {
           ),
         ],
       ),
-      body: _unavailable != null
-          ? _Fallback(reason: _unavailable!, onOpen: _openExternally)
-          : Stack(
-              children: [
-                if (_desktop != null)
-                  win.Webview(_desktop!)
-                else if (_mobile != null)
-                  WebViewWidget(controller: _mobile!),
-                if (_loading)
-                  const Center(child: CircularProgressIndicator()),
-              ],
-            ),
+      // Always the fallback while the embedded webview is disabled — see
+      // `_start()`. The commented-out Stack below is the real webview body,
+      // restorable alongside it.
+      body: _Fallback(reason: _unavailable ?? '', onOpen: _openExternally),
+      // body: _unavailable != null
+      //     ? _Fallback(reason: _unavailable!, onOpen: _openExternally)
+      //     : Stack(
+      //         children: [
+      //           if (_desktop != null)
+      //             win.Webview(_desktop!)
+      //           else if (_mobile != null)
+      //             WebViewWidget(controller: _mobile!),
+      //           if (_loading)
+      //             const Center(child: CircularProgressIndicator()),
+      //         ],
+      //       ),
       // The till keeps waiting on the acquirer behind this page, so the clerk
       // needs to be told that closing it is not the same as cancelling.
       bottomNavigationBar: SafeArea(
