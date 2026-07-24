@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../payments/connect_pac.dart';
 import '../payments/dojo_desktop.dart';
 import '../payments/payment_provider.dart';
 
@@ -66,6 +67,29 @@ CardStep cardStepFor({DojoStage? stage, DojoSession? session}) {
     null => CardStep.starting,
   };
 }
+
+/// The same translation for Paymentsense Connect, which reports progress as
+/// notification values rather than a session status. Kept beside [cardStepFor]
+/// so the two acquirers cannot drift into showing the clerk different screens
+/// for the same moment in a sale.
+CardStep cardStepForConnect(ConnectProgress progress) =>
+    switch (progress.notification) {
+      'PRESENT_CARD' ||
+      'INSERT_CARD' ||
+      'RE_PRESENT_CARD' ||
+      'PRESENT_ONLY_ONE_CARD' ||
+      'BAD_SWIPE' => CardStep.present,
+      'PIN_ENTRY' => CardStep.pin,
+      'SIGNATURE_VERIFICATION' => CardStep.signature,
+      'REMOVE_CARD' => CardStep.removeCard,
+      'APPROVED' || 'TRANSACTION_FINISHED' => CardStep.done,
+      'PLEASE_WAIT' ||
+      'RETRYING' ||
+      'SIGNATURE_VERIFICATION_IN_PROGRESS' ||
+      'CANCELLING' ||
+      'ATTEMPTING_CANCEL' => CardStep.processing,
+      _ => CardStep.starting,
+    };
 
 /// Live state of a card payment, driven by the provider callbacks.
 class CardPaymentState {

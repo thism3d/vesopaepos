@@ -6,16 +6,37 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// Who is signed into this terminal.
 class Session {
-  const Session({this.email, this.name, this.office, this.token});
+  const Session({
+    this.email,
+    this.name,
+    this.office,
+    this.officeName,
+    this.token,
+  });
 
   final String? email;
   final String? name;
 
-  /// The venue whose catalogue and sales this terminal belongs to.
+  /// The venue whose catalogue and sales this terminal belongs to, as its
+  /// **contact email** — the tenancy key every catalogue read and write is
+  /// scoped by. It is an identifier, not a name: never show it to a customer.
   final String? office;
+
+  /// The venue's trading name, for anything a customer sees.
+  ///
+  /// Separate from [office] because that one is an email address, and printing
+  /// it at the top of a receipt put a staff address in the customer's hand.
+  final String? officeName;
+
   final String? token;
 
   bool get signedIn => token != null && office != null;
+
+  /// What to print above a receipt. Falls back to the product name rather than
+  /// to [office]: a till that has not been told its trading name should say
+  /// nothing about the venue rather than leak an email address.
+  String get venueName =>
+      officeName?.trim().isNotEmpty ?? false ? officeName!.trim() : 'Vesopa';
 
   static const empty = Session();
 
@@ -23,6 +44,7 @@ class Session {
         'email': email,
         'name': name,
         'office': office,
+        'officeName': officeName,
         'token': token,
       };
 
@@ -30,6 +52,7 @@ class Session {
         email: json['email'] as String?,
         name: json['name'] as String?,
         office: json['office'] as String?,
+        officeName: json['officeName'] as String?,
         token: json['token'] as String?,
       );
 }
@@ -111,6 +134,9 @@ class SessionController extends AsyncNotifier<Session> {
       email: user['email'] as String?,
       name: user['name'] as String?,
       office: office,
+      // The server has always sent this; the till simply never kept it, which
+      // is why receipts printed the office email as the venue's name.
+      officeName: user['officeName'] as String?,
       token: body['token'] as String?,
     );
 

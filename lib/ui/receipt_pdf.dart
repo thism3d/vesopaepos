@@ -32,6 +32,7 @@ Future<Uint8List> buildReceiptPdf(
   required String venueName,
   Branding branding = const Branding(),
   bool isReprint = false,
+  bool isBill = false,
 }) async {
   // A Unicode font when one is bundled; otherwise text is degraded so "£" and
   // non-Western names stay legible instead of silently vanishing.
@@ -168,14 +169,19 @@ Future<Uint8List> buildReceiptPdf(
           ],
 
           // A reprint must say so, or it can be passed off as a second sale.
-          if (isReprint) ...[
+          // An unpaid bill must say so even more loudly — handed over without
+          // this line it reads as proof of a payment nobody has made.
+          if (isReprint || isBill) ...[
             pw.SizedBox(height: 4),
             pw.Container(
               padding: const pw.EdgeInsets.symmetric(vertical: 2),
               decoration: pw.BoxDecoration(
                 border: pw.Border.all(width: 0.8),
               ),
-              child: centred('*** REPRINT ***', style: boldStyle),
+              child: centred(
+                isBill ? '*** BILL - NOT A RECEIPT ***' : '*** REPRINT ***',
+                style: boldStyle,
+              ),
             ),
           ],
 
@@ -268,9 +274,15 @@ Future<Uint8List> buildReceiptPdf(
           pw.SizedBox(height: 3),
 
           // ---- Tenders ---------------------------------------------------
-          for (final tender in r.tenders)
-            row(_tenderLabel(tender.method), money(tender.amountMinor)),
-          if (change > 0) row('Change', money(change), bold: true),
+          // On an unpaid bill there are none, and the total is what is owed.
+          // Saying so beats a silent gap where the payment lines would be.
+          if (isBill)
+            row('Due', money(s.totalMinor), bold: true)
+          else ...[
+            for (final tender in r.tenders)
+              row(_tenderLabel(tender.method), money(tender.amountMinor)),
+            if (change > 0) row('Change', money(change), bold: true),
+          ],
 
           // ---- VAT breakdown ---------------------------------------------
           if (vatByRate.isNotEmpty) ...[

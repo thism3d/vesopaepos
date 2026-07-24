@@ -52,9 +52,14 @@ void main() {
     await tester.tap(find.text('Cola'));
     await tester.pumpAndSettle();
 
-    // Cola now appears twice: once on the grid, once in the basket.
+    // Cola now appears twice: once on the grid, once on the bill.
     expect(find.text('Cola'), findsNWidgets(2));
-    expect(find.text('1x - '), findsOneWidget);
+    // The default 800x600 test surface is a *tablet* by the app's breakpoints,
+    // so the bill renders as the LiveReceipt beside the grid rather than the
+    // phone's pull-up basket. That lays the quantity out as its own column
+    // ("1"), not as the basket's "1x - " prefix — which is why this assertion
+    // had gone stale.
+    expect(find.text('1'), findsWidgets);
     expect(find.text('£1.50'), findsWidgets);
   });
 }

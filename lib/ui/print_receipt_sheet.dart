@@ -24,6 +24,9 @@ class PrintReceiptSheet extends StatefulWidget {
     required this.venueName,
     required this.branding,
     this.showKitchenOption = true,
+    this.isReprint = false,
+    this.isBill = false,
+    this.title,
   });
 
   final ReceiptDetail receipt;
@@ -33,6 +36,17 @@ class PrintReceiptSheet extends StatefulWidget {
   /// Kitchen tickets only make sense where there is a kitchen.
   final bool showKitchenOption;
 
+  /// Stamp the document as a second copy. A reprint that looks identical to the
+  /// original can be passed off as a second sale.
+  final bool isReprint;
+
+  /// This is the bill *before* payment, not a receipt for one. Changes the
+  /// wording throughout: nothing has been paid yet.
+  final bool isBill;
+
+  /// Overrides the heading. Defaults to the paid-and-printing wording.
+  final String? title;
+
   /// Shows the sheet. Returns what was printed, or [PrintChoice.none].
   static Future<PrintChoice> show(
     BuildContext context, {
@@ -40,6 +54,9 @@ class PrintReceiptSheet extends StatefulWidget {
     required String venueName,
     required Branding branding,
     bool showKitchenOption = true,
+    bool isReprint = false,
+    bool isBill = false,
+    String? title,
   }) async {
     final choice = await showModalBottomSheet<PrintChoice>(
       context: context,
@@ -50,6 +67,9 @@ class PrintReceiptSheet extends StatefulWidget {
         venueName: venueName,
         branding: branding,
         showKitchenOption: showKitchenOption,
+        isReprint: isReprint,
+        isBill: isBill,
+        title: title,
       ),
     );
     return choice ?? PrintChoice.none;
@@ -66,6 +86,8 @@ class _PrintReceiptSheetState extends State<PrintReceiptSheet> {
         widget.receipt,
         venueName: widget.venueName,
         branding: widget.branding,
+        isReprint: widget.isReprint,
+        isBill: widget.isBill,
       );
 
   Future<Uint8List> _kitchenPdf() => buildKitchenTicketPdf(
@@ -123,11 +145,23 @@ class _PrintReceiptSheetState extends State<PrintReceiptSheet> {
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
               child: Row(
                 children: [
-                  Icon(Icons.check_circle, color: Colors.green.shade600),
+                  Icon(
+                    widget.isBill
+                        ? Icons.receipt_long
+                        : widget.isReprint
+                            ? Icons.copy_all
+                            : Icons.check_circle,
+                    color: widget.isBill || widget.isReprint
+                        ? scheme.primary
+                        : Colors.green.shade600,
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      'Paid — print receipt?',
+                      widget.title ??
+                          (widget.isBill
+                              ? 'Bill for the customer'
+                              : 'Paid — print receipt?'),
                       style: theme.textTheme.titleLarge
                           ?.copyWith(fontWeight: FontWeight.w700),
                     ),
@@ -143,6 +177,12 @@ class _PrintReceiptSheetState extends State<PrintReceiptSheet> {
             ),
 
             // Live preview of the actual PDF that will print.
+            //
+            // The preview is the point: a till with no printer configured can
+            // still generate the document, show it, and share or save it as a
+            // PDF. Sharing is left on for exactly that — a venue setting up, or
+            // one whose printer has died mid-service, can still put a receipt
+            // in the customer's hand.
             Expanded(
               child: Container(
                 margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -153,10 +193,13 @@ class _PrintReceiptSheetState extends State<PrintReceiptSheet> {
                 clipBehavior: Clip.antiAlias,
                 child: PdfPreview(
                   build: (_) => _receiptPdf(),
-                  useActions: false,
+                  useActions: true,
+                  allowPrinting: false,
+                  allowSharing: true,
                   canChangePageFormat: false,
                   canChangeOrientation: false,
                   canDebug: false,
+                  pdfFileName: widget.isBill ? 'bill.pdf' : 'receipt.pdf',
                   scrollViewDecoration: BoxDecoration(
                     color: scheme.surfaceContainerHighest,
                   ),
@@ -182,7 +225,11 @@ class _PrintReceiptSheetState extends State<PrintReceiptSheet> {
                                 : () =>
                                     Navigator.of(context).pop(PrintChoice.none),
                             icon: const Icon(Icons.close),
-                            label: const Text('No receipt'),
+                            label: Text(
+                              widget.isBill || widget.isReprint
+                                  ? 'Done'
+                                  : 'No receipt',
+                            ),
                           ),
                         ),
                       ),

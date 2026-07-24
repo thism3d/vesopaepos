@@ -1,13 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:printing/printing.dart';
 
-import '../data/receipt_repository.dart';
 import '../main.dart';
+import 'card_machine_page.dart';
 import 'layout.dart';
-import 'receipt_pdf.dart';
-import 'receipts_page.dart' show receiptListProvider;
 import 'theme.dart';
+import 'till_actions.dart';
 
 /// Till functions — the actions a clerk reaches for that are not part of ringing
 /// up a sale: park the current bill, reprint, open the drawer for a no-sale, and
@@ -48,14 +46,14 @@ class FunctionsPage extends ConsumerWidget {
         Icons.receipt_long,
         Pos.indigo,
         'Print another copy of the most recent sale.',
-        () => _reprintLast(context, ref),
+        () => TillActions.reprintLastReceipt(context, ref),
       ),
       _Function(
         'No Sale (Open Drawer)',
         Icons.point_of_sale,
         Pos.amber,
         'Open the cash drawer without ringing up a sale.',
-        () => _noSale(context, ref),
+        () => TillActions.openCashDrawer(context, ref),
       ),
       _Function(
         'X Report',
@@ -84,6 +82,18 @@ class FunctionsPage extends ConsumerWidget {
         Pos.purple,
         'Recall a parked bill, transfer or split it.',
         onGoToTables,
+      ),
+      // The card machine's own end of day can only be started from the till on
+      // an integrated reader, so it needs a key of its own or the venue cannot
+      // cash the machine up.
+      _Function(
+        'Card Machine',
+        Icons.point_of_sale,
+        Pos.teal,
+        'End of day, balances and card refunds on the PDQ.',
+        () => Navigator.of(context).push(
+          MaterialPageRoute<void>(builder: (_) => const CardMachinePage()),
+        ),
       ),
     ];
 
@@ -160,40 +170,6 @@ class FunctionsPage extends ConsumerWidget {
           ),
         ],
       ),
-    );
-  }
-
-  /// Reprint the most recent settled sale. Built from the receipt history, so it
-  /// works for any sale on this terminal, not just the one still on screen.
-  Future<void> _reprintLast(BuildContext context, WidgetRef ref) async {
-    final list = await ref.read(receiptListProvider.future);
-    if (!context.mounted) return;
-    if (list.isEmpty) {
-      _toast(context, 'No receipts yet.');
-      return;
-    }
-
-    final repo = ReceiptRepository(
-      apiBase: ref.read(apiBaseProvider),
-      office: ref.read(officeProvider),
-    );
-    final detail = await repo.detail(list.first.id);
-    if (!context.mounted) return;
-
-    await Printing.layoutPdf(
-      onLayout: (_) => buildReceiptPdf(
-        detail,
-        venueName: ref.read(sessionProvider).office ?? 'Vesopa',
-      ),
-    );
-  }
-
-  /// Open the cash drawer for a no-sale. Needs a configured receipt printer with
-  /// a drawer kick; if none is set up, say so rather than fail silently.
-  Future<void> _noSale(BuildContext context, WidgetRef ref) async {
-    _toast(
-      context,
-      'Configure a receipt printer in Settings to open the cash drawer.',
     );
   }
 

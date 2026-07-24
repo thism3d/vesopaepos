@@ -441,16 +441,26 @@ class _DepositDialogState extends State<_DepositDialog> {
   }
 }
 
-/// Find a loyalty customer by phone, and optionally spend their points.
+/// Find a loyalty member and spend their points.
 ///
-/// The phone number is how loyalty is claimed at a counter — nobody carries a
-/// card. Enrolling is offered inline when the number is not known, because the
-/// moment to sign someone up is while they are standing there.
+/// Modelled on how UK hospitality schemes are actually operated (ICRTouch's
+/// TouchPoint/TouchLoyalty being the reference point): points accrue on spend,
+/// the venue sets what they are worth and the minimum that can be cashed in,
+/// and at the counter the clerk and the customer *agree an amount* — "put a
+/// fiver of your points against it" — rather than being offered one
+/// all-or-nothing button. So this screen lets the clerk choose how many points
+/// to spend, in the scheme's own steps.
+///
+/// A member is found by phone, name or card number, because all three happen:
+/// nobody carries a card, except the customers who do. Enrolling is offered
+/// inline when there is no match, because the moment to sign someone up is
+/// while they are standing there.
 Future<RedemptionResult?> showLoyaltyDialog(
   BuildContext context, {
   required CommerceRepository commerce,
   required int outstandingMinor,
   bool redeem = true,
+  int spendMinor = 0,
 }) =>
     showDialog<RedemptionResult>(
       context: context,
@@ -458,6 +468,7 @@ Future<RedemptionResult?> showLoyaltyDialog(
         commerce: commerce,
         outstandingMinor: outstandingMinor,
         redeem: redeem,
+        spendMinor: spendMinor,
       ),
     );
 
@@ -466,56 +477,107 @@ class _LoyaltyDialog extends StatefulWidget {
     required this.commerce,
     required this.outstandingMinor,
     required this.redeem,
+    required this.spendMinor,
   });
 
   final CommerceRepository commerce;
   final int outstandingMinor;
   final bool redeem;
 
+  /// The goods on this bill, for showing what the sale will earn.
+  final int spendMinor;
+
   @override
   State<_LoyaltyDialog> createState() => _LoyaltyDialogState();
 }
 
 class _LoyaltyDialogState extends State<_LoyaltyDialog> {
-  final _phone = TextEditingController();
+  final _search = TextEditingController();
   final _name = TextEditingController();
+  final _phone = TextEditingController();
+
+  List<LoyaltyCustomer> _matches = const [];
   LoyaltyCustomer? _customer;
+
+  /// How many points the clerk has agreed to spend. Null until they choose, so
+  /// the dialog can default to the whole redeemable balance without that
+  /// looking like a decision the customer made.
+  int? _points;
+
   String? _error;
   bool _busy = false;
   bool _enrolling = false;
 
   @override
   void dispose() {
-    _phone.dispose();
+    _search.dispose();
     _name.dispose();
+    _phone.dispose();
     super.dispose();
   }
 
+  /// Look the member up. A number is tried as a phone first — that is the exact
+  /// match and the common case — then falls back to the broader search, so
+  /// "07…" finds the person even when the number was stored with spaces.
   Future<void> _lookup() async {
-    final phone = _phone.text.trim();
-    if (phone.isEmpty) return;
+    final term = _search.text.trim();
+    if (term.length < 2) return;
     setState(() {
       _busy = true;
       _error = null;
       _customer = null;
+      _matches = const [];
       _enrolling = false;
+      _points = null;
     });
+
     try {
-      final customer = await widget.commerce.loyaltyByPhone(phone);
-      if (mounted) setState(() => _customer = customer);
-    } on CommerceException catch (e) {
-      if (mounted) {
+      final looksLikeNumber = RegExp(r'^[\d +()-]+$').hasMatch(term);
+      if (looksLikeNumber) {
+        try {
+          final exact = await widget.commerce.loyaltyByPhone(term);
+          if (mounted) setState(() => _select(exact));
+          return;
+        } on CommerceException {
+          // Not this number exactly; fall through to the search below.
+        }
+      }
+
+      final found = await widget.commerce.searchLoyalty(term);
+      if (!mounted) return;
+      if (found.isEmpty) {
         setState(() {
-          _error = e.message;
           // Not found is an opportunity, not a failure.
           _enrolling = true;
+          // Carry what they typed into the right field, so enrolling is one
+          // more tap rather than typing the number out again.
+          if (looksLikeNumber) {
+            _phone.text = term;
+          } else {
+            _name.text = term;
+          }
         });
+      } else if (found.length == 1) {
+        setState(() => _select(found.first));
+      } else {
+        setState(() => _matches = found);
       }
     } catch (_) {
       if (mounted) setState(() => _error = 'Could not reach the server.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// Choose a member and default the redemption to everything they can spend
+  /// against this bill — the common case, still adjustable.
+  void _select(LoyaltyCustomer customer) {
+    _customer = customer;
+    _matches = const [];
+    _error = null;
+    _points = widget.redeem
+        ? customer.maxRedeemableAgainst(widget.outstandingMinor)
+        : 0;
   }
 
   Future<void> _enrol() async {
@@ -530,7 +592,7 @@ class _LoyaltyDialogState extends State<_LoyaltyDialog> {
       );
       if (mounted) {
         setState(() {
-          _customer = customer;
+          _select(customer);
           _enrolling = false;
         });
       }
@@ -545,108 +607,137 @@ class _LoyaltyDialogState extends State<_LoyaltyDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final customer = _customer;
-    final redeemable =
-        customer?.maxRedeemableAgainst(widget.outstandingMinor) ?? 0;
-    final worth = customer == null ? 0 : redeemable * customer.pointValueMinor;
+    final max = customer?.maxRedeemableAgainst(widget.outstandingMinor) ?? 0;
+    final chosen = (_points ?? max).clamp(0, max);
+    final worth = customer?.valueOf(chosen) ?? 0;
 
     return AlertDialog(
-      title: Text(widget.redeem ? 'Loyalty' : 'Attach customer'),
+      title: Text(widget.redeem ? 'Loyalty points' : 'Attach customer'),
       content: SizedBox(
-        width: 400,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            TextField(
-              controller: _phone,
-              autofocus: true,
-              keyboardType: TextInputType.phone,
-              decoration: InputDecoration(
-                labelText: 'Phone number',
-                suffixIcon: IconButton(
-                  icon: _busy
-                      ? const SizedBox(
-                          width: 18, height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.search),
-                  onPressed: _busy ? null : _lookup,
-                ),
-              ),
-              onSubmitted: (_) => _lookup(),
-            ),
-
-            if (_enrolling) ...[
-              const SizedBox(height: 12),
-              _Banner(
-                message: 'Not a member yet — sign them up?',
-                isError: false,
-              ),
-              const SizedBox(height: 10),
+        width: 430,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
               TextField(
-                controller: _name,
-                decoration: const InputDecoration(labelText: 'Name'),
+                controller: _search,
+                autofocus: true,
+                textInputAction: TextInputAction.search,
+                decoration: InputDecoration(
+                  labelText: 'Phone, name or card number',
+                  hintText: 'Search the loyalty scheme',
+                  suffixIcon: IconButton(
+                    icon: _busy
+                        ? const SizedBox(
+                            width: 18, height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.search),
+                    onPressed: _busy ? null : _lookup,
+                  ),
+                ),
+                onSubmitted: (_) => _lookup(),
               ),
-              const SizedBox(height: 10),
-              FilledButton.tonalIcon(
-                onPressed: _busy ? null : _enrol,
-                icon: const Icon(Icons.person_add_alt),
-                label: const Text('Enrol this customer'),
-              ),
-            ] else if (_error != null) ...[
-              const SizedBox(height: 12),
-              _Banner(message: _error!, isError: true),
-            ],
 
-            if (customer != null) ...[
-              const SizedBox(height: 14),
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primaryContainer,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            customer.name,
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleMedium
-                                ?.copyWith(fontWeight: FontWeight.bold),
+              // More than one match: let the clerk pick rather than guessing at
+              // the first, which is how the wrong customer gets the points.
+              if (_matches.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text('${_matches.length} members match',
+                    style: theme.textTheme.bodySmall),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 220),
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: [
+                      for (final match in _matches)
+                        ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.person_outline),
+                          title: Text(match.name),
+                          subtitle: Text(
+                            [
+                              if (match.phone?.isNotEmpty ?? false) match.phone!,
+                              '${match.pointsBalance} pts',
+                              if (match.tierName?.isNotEmpty ?? false)
+                                match.tierName!,
+                            ].join(' · '),
+                            style: const TextStyle(fontSize: 11.5),
                           ),
+                          onTap: () => setState(() => _select(match)),
                         ),
-                        if (customer.tierName != null)
-                          Chip(
-                            label: Text(customer.tierName!),
-                            visualDensity: VisualDensity.compact,
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text('${customer.pointsBalance} points '
-                        '· worth ${_money(customer.pointsValueMinor)}'),
-                    if (widget.redeem) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        redeemable > 0
-                            ? 'Can redeem $redeemable points (${_money(worth)}) '
-                                'against this bill'
-                            : customer.pointsBalance < customer.minRedeemPoints
-                                ? 'Needs ${customer.minRedeemPoints} points to redeem'
-                                : 'Nothing to redeem against this bill',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
                     ],
-                  ],
+                  ),
                 ),
-              ),
+              ],
+
+              if (_enrolling) ...[
+                const SizedBox(height: 12),
+                const _Banner(
+                  message: 'Not a member yet — sign them up?',
+                  isError: false,
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _name,
+                  decoration: const InputDecoration(labelText: 'Name'),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _phone,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(labelText: 'Phone number'),
+                ),
+                const SizedBox(height: 10),
+                FilledButton.tonalIcon(
+                  onPressed: _busy ? null : _enrol,
+                  icon: const Icon(Icons.person_add_alt),
+                  label: const Text('Enrol this customer'),
+                ),
+              ] else if (_error != null) ...[
+                const SizedBox(height: 12),
+                _Banner(message: _error!, isError: true),
+              ],
+
+              if (customer != null) ...[
+                const SizedBox(height: 14),
+                _MemberCard(
+                  customer: customer,
+                  willEarn: customer.pointsFor(widget.spendMinor),
+                ),
+
+                if (widget.redeem) ...[
+                  const SizedBox(height: 14),
+                  if (!customer.enabled)
+                    const _Banner(
+                      message: 'The loyalty scheme is switched off.',
+                      isError: true,
+                    )
+                  else if (max <= 0)
+                    _Banner(
+                      message: customer.pointsBalance <
+                              customer.minRedeemPoints
+                          ? '${customer.minRedeemPoints} points are needed to '
+                              'redeem — they have ${customer.pointsBalance}.'
+                          : 'Nothing left to redeem against this bill.',
+                      isError: false,
+                    )
+                  else
+                    _PointsChooser(
+                      customer: customer,
+                      options: customer.redemptionOptions(
+                        widget.outstandingMinor,
+                      ),
+                      selected: chosen,
+                      onChanged: (points) => setState(() => _points = points),
+                    ),
+                ],
+              ],
             ],
-          ],
+          ),
         ),
       ),
       actions: [
@@ -654,8 +745,9 @@ class _LoyaltyDialogState extends State<_LoyaltyDialog> {
           onPressed: () => Navigator.pop(context),
           child: const Text('Cancel'),
         ),
-        // Attaching without redeeming still earns points on the sale.
-        if (customer != null)
+        // Attaching without redeeming still earns points on the sale, which is
+        // the whole reason a customer gives their number at the counter.
+        if (customer != null && widget.redeem)
           TextButton(
             onPressed: () => Navigator.pop(
               context,
@@ -665,23 +757,241 @@ class _LoyaltyDialogState extends State<_LoyaltyDialog> {
                 customer: customer,
               ),
             ),
-            child: const Text('Attach only'),
+            child: const Text('Earn only'),
           ),
-        if (widget.redeem)
-          FilledButton(
-            onPressed: customer != null && redeemable > 0
-                ? () => Navigator.pop(
-                      context,
-                      RedemptionResult(
-                        amountMinor: worth,
-                        reference: customer.phone ?? '',
-                        customer: customer,
-                        points: redeemable,
-                      ),
-                    )
-                : null,
-            child: Text(worth > 0 ? 'Redeem ${_money(worth)}' : 'Redeem'),
+        FilledButton(
+          onPressed: customer == null
+              ? null
+              : !widget.redeem
+                  ? () => Navigator.pop(
+                        context,
+                        RedemptionResult(
+                          amountMinor: 0,
+                          reference: customer.phone ?? '',
+                          customer: customer,
+                        ),
+                      )
+                  : chosen > 0
+                      ? () => Navigator.pop(
+                            context,
+                            RedemptionResult(
+                              amountMinor: worth,
+                              reference: customer.phone ?? '',
+                              customer: customer,
+                              points: chosen,
+                            ),
+                          )
+                      : null,
+          child: Text(
+            !widget.redeem
+                ? 'Attach'
+                : worth > 0
+                    ? 'Spend $chosen pts (${_money(worth)})'
+                    : 'Spend points',
           ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Who the member is and where they stand — balance, tier, and what this sale
+/// will add. The last of those is what a clerk reads out to close the loop
+/// ("that's another 24 points"), and it was missing entirely before.
+class _MemberCard extends StatelessWidget {
+  const _MemberCard({required this.customer, required this.willEarn});
+
+  final LoyaltyCustomer customer;
+  final int willEarn;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: scheme.primaryContainer,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  customer.name,
+                  style: theme.textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                ),
+              ),
+              if (customer.tierName?.isNotEmpty ?? false)
+                Chip(
+                  visualDensity: VisualDensity.compact,
+                  label: Text(
+                    customer.tierMultiplier > 1
+                        ? '${customer.tierName} '
+                            '×${customer.tierMultiplier.toStringAsFixed(
+                                customer.tierMultiplier % 1 == 0 ? 0 : 1)}'
+                        : customer.tierName!,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '${customer.pointsBalance}',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: scheme.onPrimaryContainer,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 3),
+                child: Text(
+                  'points · worth ${_money(customer.pointsValueMinor)}',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ),
+            ],
+          ),
+          if (willEarn > 0) ...[
+            const SizedBox(height: 4),
+            Text(
+              'This sale earns $willEarn more.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// How many points to spend.
+///
+/// Offered in the scheme's own redemption steps, so a till can never hand back
+/// a fraction of a step the back office would refuse. The whole redeemable
+/// balance is preselected because that is what most customers ask for; the
+/// smaller amounts exist because some want to keep a balance.
+class _PointsChooser extends StatelessWidget {
+  const _PointsChooser({
+    required this.customer,
+    required this.options,
+    required this.selected,
+    required this.onChanged,
+  });
+
+  final LoyaltyCustomer customer;
+  final List<int> options;
+  final int selected;
+  final void Function(int points) onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final max = options.isEmpty ? 0 : options.last;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Spend how many points?', style: theme.textTheme.labelLarge),
+        const SizedBox(height: 8),
+
+        // A long ladder of steps would be an unusable wall of chips on a till,
+        // so past a handful it becomes a slider with the steps as its
+        // divisions — same values, one gesture.
+        if (options.length <= 6)
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final points in options)
+                ChoiceChip(
+                  label: Text('$points · ${_money(customer.valueOf(points))}'),
+                  selected: selected == points,
+                  onSelected: (_) => onChanged(points),
+                ),
+            ],
+          )
+        else
+          Column(
+            children: [
+              Slider(
+                value: selected.toDouble().clamp(
+                      options.first.toDouble(),
+                      max.toDouble(),
+                    ),
+                min: options.first.toDouble(),
+                max: max.toDouble(),
+                divisions: options.length - 1,
+                label: '$selected pts',
+                onChanged: (value) {
+                  // Snap to a real option: the slider is a way of picking one
+                  // of these, not a continuous amount.
+                  final nearest = options.reduce(
+                    (a, b) => (a - value).abs() < (b - value).abs() ? a : b,
+                  );
+                  onChanged(nearest);
+                },
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('${options.first} pts',
+                      style: theme.textTheme.bodySmall),
+                  TextButton(
+                    onPressed: () => onChanged(max),
+                    child: const Text('Use all'),
+                  ),
+                  Text('$max pts', style: theme.textTheme.bodySmall),
+                ],
+              ),
+            ],
+          ),
+
+        const SizedBox(height: 10),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(9),
+          ),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  const Expanded(child: Text('Comes off the bill')),
+                  Text(
+                    '-${_money(customer.valueOf(selected))}',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 17),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text('Points left afterwards',
+                        style: theme.textTheme.bodySmall),
+                  ),
+                  Text('${customer.pointsBalance - selected}',
+                      style: theme.textTheme.bodySmall),
+                ],
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }

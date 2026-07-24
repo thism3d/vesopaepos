@@ -12,7 +12,9 @@ import 'customer_picker.dart';
 import 'payment_page.dart';
 import 'table_picker.dart';
 import 'tables_page.dart' show parkedOrdersProvider;
+import 'discount_dialog.dart';
 import 'theme.dart';
+import 'till_actions.dart';
 import 'void_dialog.dart';
 import 'widgets/action_bar.dart';
 import '../data/commerce.dart';
@@ -282,17 +284,18 @@ class SalePage extends ConsumerWidget {
                     PosAction(
                       label: 'No Sale',
                       icon: Icons.point_of_sale,
-                      onTap: () => _todo(context, 'Opening the cash drawer'),
+                      onTap: () => TillActions.openCashDrawer(context, ref),
                     ),
                     PosAction(
                       label: 'Print',
                       icon: Icons.print,
-                      onTap: () => _todo(context, 'Receipt printing'),
+                      onTap: () =>
+                          TillActions.printCurrentBill(context, ref, orderId),
                     ),
                     PosAction(
                       label: 'Last Bill',
                       icon: Icons.receipt_long,
-                      onTap: () => _todo(context, 'Reprinting the last bill'),
+                      onTap: () => TillActions.reprintLastReceipt(context, ref),
                     ),
                   ],
                 ),
@@ -348,14 +351,30 @@ class SalePage extends ConsumerWidget {
     }
   }
 
+  /// Discount the whole bill, as a percentage or a cash amount.
+  ///
+  /// The percentage is taken off what the goods actually come to, so it has to
+  /// be read off the order first — "10% off" against a stale figure is the
+  /// wrong money.
   Future<void> _promptDiscount(BuildContext context, WidgetRef ref) async {
-    final pounds = await _textDialog(context, 'Discount (£)');
-    if (pounds == null) return;
-    final value = double.tryParse(pounds);
-    if (value == null) return;
-    await ref
-        .read(orderRepositoryProvider)
-        .applyDiscount(orderId, (value * 100).round());
+    final repo = ref.read(orderRepositoryProvider);
+    final lines = await repo.watchLines(orderId).first;
+    if (!context.mounted) return;
+
+    final subtotal = lines.fold<int>(
+      0,
+      (sum, l) => sum + (l.unitPriceMinor * l.quantity).round(),
+    );
+    if (subtotal <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Nothing on this bill to discount yet.')),
+      );
+      return;
+    }
+
+    final choice = await showDiscountDialog(context, subtotalMinor: subtotal);
+    if (choice == null) return;
+    await repo.applyDiscount(orderId, choice.amountMinor);
   }
 
   Future<void> _promptNotes(BuildContext context, WidgetRef ref) async {
@@ -363,12 +382,6 @@ class SalePage extends ConsumerWidget {
     if (value != null) {
       await ref.read(orderRepositoryProvider).setNotes(orderId, value);
     }
-  }
-
-  void _todo(BuildContext context, String what) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('$what is not wired up yet.')));
   }
 }
 

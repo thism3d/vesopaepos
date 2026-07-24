@@ -10,10 +10,14 @@ import '../data/pricing_engine.dart';
 import '../data/receipt_repository.dart';
 import '../data/tender_engine.dart';
 import '../main.dart';
+import '../payments/connect_pac.dart';
 import '../payments/dojo_desktop.dart';
 import '../payments/payment_provider.dart';
 import 'layout.dart';
+import 'card_checkout_page.dart';
 import 'card_payment_dialog.dart';
+import 'confirm_tender_dialog.dart';
+import 'discount_dialog.dart';
 import 'print_receipt_sheet.dart';
 import 'redemption_dialogs.dart';
 import 'widgets/live_receipt.dart';
@@ -134,7 +138,7 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
     await PrintReceiptSheet.show(
       context,
       receipt: detail,
-      venueName: session.office ?? 'Vesopa',
+      venueName: session.venueName,
       branding: ref.read(brandingProvider),
       // A takeaway counter has no kitchen ticket to send; a table order does.
       showKitchenOption: order.tableNumber != null,
@@ -158,36 +162,40 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
     );
   }
 
-  /// Run a card through Dojo. Returns true only if the money was actually
-  /// taken — a decline, an error, or a timeout all return false, so the sale
-  /// is never recorded as paid when it was not.
+  /// Run a card. Returns true only if the money was actually taken — a decline,
+  /// an error, or a timeout all return false, so the sale is never recorded as
+  /// paid when it was not.
   ///
-  /// [manual] takes the *keyed* route rather than the card machine: the card
-  /// number is typed in rather than presented. That is a different product —
-  /// on Android it is the drop-in SDK's own card-entry screen, on desktop it
-  /// is Dojo's hosted checkout — so it deliberately bypasses the terminal
-  /// provider even when a reader is attached. A venue reaches for this when a
-  /// chip will not read or the customer is on the phone.
-  Future<bool> _takeCard(int amountMinor, {bool manual = false}) async {
-    final dojo = manual
+  /// [manual] takes the *keyed* route rather than a presented card: the number
+  /// is typed in. Each acquirer expresses that differently — Connect flags the
+  /// transaction card-not-present so the PDQ opens its keypad, Dojo routes to
+  /// card-entry UI instead of the reader — so it is passed straight through to
+  /// the provider rather than decided here. A venue reaches for this when a
+  /// chip will not read or the customer is on the telephone.
+  Future<PaymentResult?> _takeCard(
+    int amountMinor, {
+    bool manual = false,
+  }) async {
+    final provider = manual
         ? ref.read(manualCardProvider)
         : ref.read(dojoProvider);
-    if (dojo == null) {
+    if (provider == null) {
       _toast(
-        'Card payments are not set up. Add your Dojo key in '
+        'Card payments are not set up. Add your card API URL and key in '
         'Settings › Card payments.',
       );
-      return false;
+      return null;
     }
 
     // The clerk needs to know the till is waiting on the customer, and must not
     // be able to press Card twice while it is.
     //
-    // On desktop the provider reports what it is actually doing, and the wait
-    // can be abandoned: a card payment can sit unanswered for minutes, and a
-    // spinner with no message and no way out strands the till mid-service.
-    final desktop = dojo is DesktopDojoProvider ? dojo : null;
-    final rest = dojo is DojoProvider ? dojo : desktop?.intents;
+    // Where the provider reports what it is actually doing, the wait can be
+    // abandoned: a card payment can sit unanswered for minutes, and a spinner
+    // with no message and no way out strands the till mid-service.
+    final desktop = provider is DesktopDojoProvider ? provider : null;
+    final rest = provider is DojoProvider ? provider : desktop?.intents;
+    final connect = provider is ConnectPacProvider ? provider : null;
 
     // One notifier drives the whole screen: the stage the till knows about,
     // plus whatever the reader is telling the customer.
@@ -195,6 +203,16 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
       const CardPaymentState(step: CardStep.starting),
     );
     DojoStage? lastStage;
+
+    // The provider blocks on this when the reader asks for a signature; the
+    // Completer is finished by whichever button the clerk presses.
+    Completer<bool>? signature;
+    Future<bool> askForSignature() {
+      final completer = Completer<bool>();
+      signature = completer;
+      payment.value = payment.value.copyWith(step: CardStep.signature);
+      return completer.future;
+    }
 
     // When the sale runs on a card machine, show what the reader is telling
     // the customer ("present card", "enter PIN") rather than a generic wait —
@@ -206,19 +224,34 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
         terminalLabel: rest.terminalId,
       );
     };
-
-    // The provider blocks on this when the reader asks for a signature; the
-    // Completer is finished by whichever button the clerk presses.
-    Completer<bool>? signature;
-    rest?.onSignatureRequested = () {
-      final completer = Completer<bool>();
-      signature = completer;
-      payment.value = payment.value.copyWith(step: CardStep.signature);
-      return completer.future;
-    };
+    rest?.onSignatureRequested = askForSignature;
     desktop?.onStageChanged = (s) {
       lastStage = s;
       payment.value = payment.value.copyWith(step: cardStepFor(stage: s));
+    };
+
+    connect?.onProgress = (p) {
+      payment.value = payment.value.copyWith(
+        step: cardStepForConnect(p),
+        readerPrompt: p.prompt,
+        terminalLabel: connect.terminalId,
+      );
+    };
+    connect?.onSignatureRequested = askForSignature;
+
+    // Render the hosted card page inside the till rather than handing it to the
+    // system browser: on a Windows touch till there may be no browser to hand
+    // it to, and on a tablet the customer ends up holding the whole device.
+    desktop?.openCheckout = (url) async {
+      if (!mounted) return false;
+      unawaited(
+        CardCheckoutPage.show(
+          context,
+          url: url,
+          amountLabel: _money(amountMinor),
+        ),
+      );
+      return true;
     };
 
     unawaited(
@@ -226,19 +259,21 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
         context: context,
         barrierDismissible: false,
         useRootNavigator: true,
+        routeSettings: const RouteSettings(name: CardCheckoutPage.routeName),
         builder: (dialogContext) => ValueListenableBuilder<CardPaymentState>(
           valueListenable: payment,
           builder: (_, state, _) => CardPaymentView(
             state: state,
             amountLabel: _money(amountMinor),
-            // Only the desktop provider can abandon a wait; the Android
-            // drop-in owns its own screen and its own cancel button.
-            onCancel: desktop == null
+            // Only providers that poll can abandon a wait; the Android drop-in
+            // owns its own screen and its own cancel button.
+            onCancel: desktop == null && connect == null
                 ? null
                 : () {
                     // Stop polling; the result comes back as "abandoned",
                     // never as paid or declined.
-                    desktop.cancel();
+                    desktop?.cancel();
+                    connect?.abandon();
                     Navigator.of(dialogContext).pop();
                   },
             // Signature verification, when the reader asks for it. Answering
@@ -254,22 +289,66 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
       ),
     );
 
-    final result = await dojo.take(amountMinor, orderId: widget.orderId);
+    final result = await provider.take(
+      amountMinor,
+      orderId: widget.orderId,
+      manual: manual,
+    );
 
     // Detach before disposing, or a late poll would write to a dead notifier.
     rest?.onTerminalUpdate = null;
+    rest?.onSignatureRequested = null;
     desktop?.onStageChanged = null;
+    desktop?.openCheckout = null;
+    connect?.onProgress = null;
+    connect?.onSignatureRequested = null;
     payment.dispose();
-    // The dialog may already be gone if the clerk cancelled.
-    if (mounted && Navigator.of(context, rootNavigator: true).canPop()) {
-      Navigator.of(context, rootNavigator: true).pop();
+    // Close the card screens. The checkout page may be sitting on top of the
+    // progress dialog, and either may already be gone if the clerk or the
+    // customer closed it, so this pops exactly the routes this flow pushed —
+    // popping a fixed number of times would take the sale screen with it.
+    if (mounted) {
+      Navigator.of(context, rootNavigator: true).popUntil(
+        (route) => route.settings.name != CardCheckoutPage.routeName,
+      );
     }
 
     if (!result.approved) {
-      _toast(result.message ?? 'Card payment declined.');
-      return false;
+      // An outcome the till cannot trust is not a decline, and a snackbar is
+      // the wrong shape for it: the clerk has to go and do something about the
+      // reader before charging the card again.
+      if (result.uncertainty != PaymentUncertainty.none && mounted) {
+        await showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            icon: Icon(
+              result.uncertainty == PaymentUncertainty.terminalUnreachable
+                  ? Icons.error_outline
+                  : Icons.help_outline,
+              size: 30,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            title: const Text('Did that payment go through?'),
+            content: Text(
+              '${result.message}\n\n'
+              'This sale has NOT been marked as paid. Do not charge the card '
+              'again until you know.',
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Understood'),
+              ),
+            ],
+          ),
+        );
+      } else {
+        _toast(result.message ?? 'Card payment declined.');
+      }
+      return null;
     }
-    return true;
+    return result;
   }
 
   void _toast(String message) {
@@ -283,6 +362,12 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
   /// Reductions the clerk has agreed, kept here rather than on the order so
   /// they can be undone before the sale is committed.
   int _manualDiscountMinor = 0;
+
+  /// How the discount was expressed, kept alongside the money so the dialog can
+  /// reopen on what the clerk actually chose rather than on a cash figure they
+  /// never typed.
+  DiscountChoice? _discount;
+
   int _voucherMinor = 0;
   String? _voucherCode;
   int _pointsMinor = 0;
@@ -345,17 +430,33 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
 
     switch (kind) {
       case TenderKind.cash:
+        // Cash and card are one tap away from money moving, and unlike the
+        // redemption routes below they have no lookup step of their own to act
+        // as a check. So this is theirs.
+        if (!await _confirm(kind, amount, due)) return;
         _record(TenderEntry(kind: kind, amountMinor: amount));
 
       case TenderKind.card:
       case TenderKind.manualCard:
         final manual = kind == TenderKind.manualCard;
-        final approved = await _takeCard(amount, manual: manual);
-        if (!approved) return;
+        if (!await _confirm(kind, amount, due, manual: manual)) return;
+        final result = await _takeCard(amount, manual: manual);
+        if (result == null) return;
+
+        // Cashback and gratuity are added on the card machine, so the till only
+        // finds out about them here. Both have to be recorded — the drawer is
+        // short by the cashback, and the tip belongs to whoever earned it.
+        if (result.cashbackMinor > 0 || result.gratuityMinor > 0) {
+          await _reportReaderExtras(result);
+        }
+
         _record(TenderEntry(
           kind: kind,
           amountMinor: amount,
           entryMode: manual ? 'manual' : 'terminal',
+          reference: result.reference,
+          cashbackMinor: result.cashbackMinor,
+          gratuityMinor: result.gratuityMinor,
         ));
 
       case TenderKind.giftCard:
@@ -373,6 +474,73 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
       case TenderKind.account:
         _record(TenderEntry(kind: kind, amountMinor: amount));
     }
+  }
+
+  /// Tell the clerk what the customer added at the card machine.
+  ///
+  /// Cashback in particular is an instruction, not a notification: the card has
+  /// been charged for it and the customer is now waiting for notes out of the
+  /// drawer. Left as a snackbar it scrolls away, the customer leaves without
+  /// their money, and the drawer is over at cash-up with nothing to explain it.
+  Future<void> _reportReaderExtras(PaymentResult result) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.account_balance_wallet_outlined, size: 30),
+        title: Text(
+          result.cashbackMinor > 0 ? 'Give cashback' : 'Gratuity added',
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (result.cashbackMinor > 0) ...[
+              Text(
+                'Hand the customer ${_money(result.cashbackMinor)} from the '
+                'drawer.',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+            ],
+            if (result.gratuityMinor > 0)
+              Text(
+                'The customer added ${_money(result.gratuityMinor)} as a tip at '
+                'the card machine.',
+              ),
+            const SizedBox(height: 10),
+            Text(
+              'The card was charged ${_money(result.chargedMinor)} in total.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Last check before money moves. Returns false if the clerk backs out.
+  Future<bool> _confirm(
+    TenderKind kind,
+    int amountMinor,
+    int dueMinor, {
+    bool manual = false,
+  }) async {
+    if (!mounted || amountMinor <= 0) return false;
+    return confirmTender(
+      context,
+      kind: kind,
+      amountMinor: amountMinor,
+      dueMinor: dueMinor,
+      manual: manual,
+    );
   }
 
   void _record(TenderEntry entry) {
@@ -442,11 +610,31 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
 
   /// A voucher reduces the bill rather than paying it, so it is not recorded
   /// as a tender — it changes what is owed.
+  ///
+  /// Applying one only *holds* it. It is marked used when the sale settles
+  /// (see [_settleIfPaid]): burning it here meant a clerk who applied a voucher
+  /// and then backed out of the payment had spent the customer's single-use
+  /// voucher on nothing, with no way to give it back.
   Future<void> _takeVoucher() async {
-    final commerce = ref.read(commerceRepositoryProvider);
+    // Already holding one — offer to take it off rather than silently
+    // replacing it, since only one voucher applies to a bill.
+    if (_voucherMinor > 0) {
+      final remove = await _confirmRemoval(
+        'Remove voucher $_voucherCode?',
+        'It comes back off the bill and stays unused.',
+      );
+      if (remove && mounted) {
+        setState(() {
+          _voucherMinor = 0;
+          _voucherCode = null;
+        });
+      }
+      return;
+    }
+
     final result = await showVoucherDialog(
       context,
-      commerce: commerce,
+      commerce: ref.read(commerceRepositoryProvider),
       subtotalMinor: _tender.totals.netGoodsMinor,
     );
     if (result == null || !mounted) return;
@@ -455,17 +643,32 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
       _voucherMinor = result.amountMinor;
       _voucherCode = result.reference;
     });
-    // Mark it used so a single-use voucher cannot be applied twice.
-    unawaited(commerce.redeemVoucher(result.reference));
   }
 
   /// Points also reduce the bill. They are only spent on the server once the
   /// sale settles, so an abandoned payment does not cost the customer points.
   Future<void> _takePoints() async {
+    if (_pointsRedeemed > 0) {
+      final remove = await _confirmRemoval(
+        'Take back $_pointsRedeemed points?',
+        'They go back on the bill and stay in the customer\'s balance.',
+      );
+      if (remove && mounted) {
+        setState(() {
+          _pointsMinor = 0;
+          _pointsRedeemed = 0;
+        });
+      }
+      return;
+    }
+
     final result = await showLoyaltyDialog(
       context,
       commerce: ref.read(commerceRepositoryProvider),
       outstandingMinor: _tender.dueNowMinor,
+      // So the dialog can tell the customer what this sale will earn them,
+      // which is half of why they hand over their number.
+      spendMinor: _tender.totals.netGoodsMinor,
     );
     if (result == null || !mounted) return;
 
@@ -478,19 +681,50 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
     });
   }
 
-  /// Take the keyed amount off the bill as a manual discount. This is the
-  /// clerk's own reduction — a goodwill gesture or a price match — as distinct
-  /// from an automatic offer or a voucher.
-  void _applyManualDiscount() {
-    final keyed = double.tryParse(_entry);
-    if (keyed == null || keyed <= 0) {
-      _toast('Key an amount first, then press Discount.');
-      return;
-    }
+  /// Take an amount off the bill as a manual discount. This is the clerk's own
+  /// reduction — a goodwill gesture or a price match — as distinct from an
+  /// automatic offer or a voucher.
+  ///
+  /// Offered as a percentage or a cash amount: "give them 10% off" is the more
+  /// common instruction, and making the clerk do that arithmetic at the counter
+  /// is where discounts go wrong.
+  Future<void> _applyManualDiscount() async {
+    final base = _tender.totals.grossMinor - _tender.totals.promoMinor;
+    final choice = await showDiscountDialog(
+      context,
+      subtotalMinor: base,
+      current: _discount,
+    );
+    if (choice == null || !mounted) return;
+
     setState(() {
-      _manualDiscountMinor = (keyed * 100).round();
+      _discount = choice.amountMinor > 0 ? choice : null;
+      _manualDiscountMinor = choice.amountMinor;
       _entry = '';
     });
+  }
+
+  /// A small yes/no for undoing a reduction. Removing one changes what the
+  /// customer owes, so it is not something a stray tap should do.
+  Future<bool> _confirmRemoval(String title, String detail) async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(detail),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Keep it'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    return yes ?? false;
   }
 
   Future<void> _chooseGratuity() async {
@@ -541,11 +775,26 @@ class _PaymentPageState extends ConsumerState<PaymentPage> {
       );
     }
 
-    // Loyalty is moved only now: points are spent when the sale completes, and
-    // earned on what was actually paid for the goods.
+    final commerce = ref.read(commerceRepositoryProvider);
+
+    // Mark the voucher used only now. Doing it when it was applied burned a
+    // single-use voucher on a payment the clerk then abandoned, with no way to
+    // hand it back.
+    final voucher = _voucherCode;
+    if (voucher != null && _voucherMinor > 0) {
+      try {
+        await commerce.redeemVoucher(voucher);
+      } catch (_) {
+        // The sale is paid and the customer has had the discount. A voucher
+        // that could not be marked used is a reconciliation problem for the
+        // back office, not a reason to hold up the receipt.
+      }
+    }
+
+    // Loyalty is moved only now for the same reason: points are spent when the
+    // sale completes, and earned on what was actually paid for the goods.
     final customer = _customer;
     if (customer != null) {
-      final commerce = ref.read(commerceRepositoryProvider);
       try {
         if (_pointsRedeemed > 0) {
           await commerce.movePoints(

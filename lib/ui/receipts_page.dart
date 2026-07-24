@@ -212,9 +212,14 @@ class _ReceiptDialog extends ConsumerWidget {
                 // Render the actual PDF, so what the clerk sees is exactly what
                 // reprints — no second "preview" layout to drift out of sync.
                 child: PdfPreview(
+                  // Marked a reprint, and rendered with the venue's branding —
+                  // a second copy that looks identical to the original can be
+                  // passed off as a second sale.
                   build: (_) => buildReceiptPdf(
                     r,
-                    venueName: ref.read(sessionProvider).office ?? 'Vesopa',
+                    venueName: ref.read(sessionProvider).venueName,
+                    branding: ref.read(brandingProvider),
+                    isReprint: true,
                   ),
                   allowSharing: true,
                   canChangePageFormat: false,
@@ -226,8 +231,9 @@ class _ReceiptDialog extends ConsumerWidget {
                         await Printing.layoutPdf(
                           onLayout: (f) => buildReceiptPdf(
                             r,
-                            venueName:
-                                ref.read(sessionProvider).office ?? 'Vesopa',
+                            venueName: ref.read(sessionProvider).venueName,
+                            branding: ref.read(brandingProvider),
+                            isReprint: true,
                           ),
                         );
                       },

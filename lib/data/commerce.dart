@@ -342,6 +342,11 @@ class VoucherCheck {
 }
 
 /// A loyalty member and what their points are worth.
+///
+/// The scheme rules travel with the customer rather than being held separately,
+/// because every question the till asks — can they redeem, how much is a point
+/// worth, what will this sale earn — needs both, and a customer priced against
+/// stale settings is a customer given the wrong discount.
 class LoyaltyCustomer {
   const LoyaltyCustomer({
     required this.id,
@@ -350,11 +355,16 @@ class LoyaltyCustomer {
     required this.pointsValueMinor,
     required this.redeemable,
     this.phone,
+    this.cardNumber,
     this.tierName,
+    this.tierMultiplier = 1.0,
+    this.visits = 0,
+    this.enabled = true,
     this.minRedeemPoints = 100,
     this.redeemStepPoints = 100,
     this.pointValueMinor = 1,
     this.pointsPerPound = 1,
+    this.minSpendMinor = 0,
   });
 
   final String id;
@@ -363,42 +373,102 @@ class LoyaltyCustomer {
   final int pointsValueMinor;
   final bool redeemable;
   final String? phone;
+  final String? cardNumber;
   final String? tierName;
+
+  /// What this tier multiplies earnings by — the reason for having tiers at
+  /// all. 1.0 when the customer is not on one.
+  final double tierMultiplier;
+  final int visits;
+
+  /// Whether the venue's scheme is switched on. A retired scheme still has
+  /// members and balances; it just stops moving points.
+  final bool enabled;
+
   final int minRedeemPoints;
   final int redeemStepPoints;
   final int pointValueMinor;
   final int pointsPerPound;
+
+  /// Spend below this earns nothing.
+  final int minSpendMinor;
+
+  int get _step => redeemStepPoints > 0 ? redeemStepPoints : 1;
 
   /// The most this customer can take off a bill of [outstandingMinor].
   ///
   /// Rounded down to a whole redemption step: a scheme that redeems in
   /// hundreds must not hand back 137 points' worth.
   int maxRedeemableAgainst(int outstandingMinor) {
-    if (!redeemable || pointValueMinor <= 0) return 0;
+    if (!enabled || !redeemable || pointValueMinor <= 0) return 0;
     final affordable = outstandingMinor ~/ pointValueMinor;
     final usable = affordable < pointsBalance ? affordable : pointsBalance;
-    final step = redeemStepPoints > 0 ? redeemStepPoints : 1;
-    final stepped = (usable ~/ step) * step;
+    final stepped = (usable ~/ _step) * _step;
     return stepped >= minRedeemPoints ? stepped : 0;
   }
 
-  /// Points a spend of [spendMinor] would earn.
-  int pointsFor(int spendMinor) => (spendMinor ~/ 100) * pointsPerPound;
+  /// Every amount the clerk may redeem against a bill, smallest first.
+  ///
+  /// Redeeming is a conversation — "put £5 of your points against it" — not an
+  /// all-or-nothing button, which is how UK schemes are actually operated. The
+  /// steps come from the scheme so a till can never offer a redemption the back
+  /// office would refuse.
+  List<int> redemptionOptions(int outstandingMinor) {
+    final max = maxRedeemableAgainst(outstandingMinor);
+    if (max <= 0) return const [];
+    return [
+      for (var points = minRedeemPoints; points <= max; points += _step) points,
+      // The floor may not itself be a multiple of the step, so the top of the
+      // range is added explicitly rather than assumed to fall on one.
+      if ((max - minRedeemPoints) % _step != 0) max,
+    ];
+  }
+
+  /// What [points] are worth as money.
+  int valueOf(int points) => points * pointValueMinor;
+
+  /// Points a spend of [spendMinor] would earn, including this customer's tier
+  /// multiplier — the same arithmetic the server does, so the receipt promises
+  /// what the ledger will actually award.
+  int pointsFor(int spendMinor) {
+    if (!enabled || spendMinor < minSpendMinor) return 0;
+    return ((spendMinor ~/ 100) * pointsPerPound * tierMultiplier).round();
+  }
+
+  /// Read a MySQL DECIMAL, which arrives over JSON as a string rather than a
+  /// number. Every multiplier and rate in the loyalty settings is one of these.
+  static double _decimal(Object? value, double fallback) => switch (value) {
+        final num n => n.toDouble(),
+        final String s => double.tryParse(s) ?? fallback,
+        _ => fallback,
+      };
 
   factory LoyaltyCustomer.fromJson(Map<String, dynamic> j) {
     final settings = (j['settings'] as Map?)?.cast<String, dynamic>() ?? {};
+    final tierName = j['tier_name'] as String?;
+    final tiers = ((settings['tiers'] as List?) ?? const [])
+        .cast<Map<String, dynamic>>();
+    final tier = tiers.where((t) => t['name'] == tierName).firstOrNull;
+
     return LoyaltyCustomer(
       id: j['id'] as String? ?? '',
       name: j['name'] as String? ?? 'Guest',
       phone: j['phone'] as String?,
+      cardNumber: j['card_number'] as String?,
       pointsBalance: (j['points_balance'] as num?)?.toInt() ?? 0,
       pointsValueMinor: (j['points_value_minor'] as num?)?.toInt() ?? 0,
       redeemable: j['redeemable'] == true,
-      tierName: j['tier_name'] as String?,
+      tierName: tierName,
+      // MySQL sends DECIMAL as a *string* ("1.50"), not a number, so a plain
+      // `as num?` cast silently yields null and every tier quietly earns ×1.
+      tierMultiplier: _decimal(tier?['points_multiplier'], 1.0),
+      visits: (j['visits'] as num?)?.toInt() ?? 0,
+      enabled: settings['enabled'] != 0 && settings['enabled'] != false,
       minRedeemPoints: (settings['min_redeem_points'] as num?)?.toInt() ?? 100,
       redeemStepPoints: (settings['redeem_step_points'] as num?)?.toInt() ?? 100,
       pointValueMinor: (settings['point_value_minor'] as num?)?.toInt() ?? 1,
       pointsPerPound: (settings['points_per_pound'] as num?)?.toInt() ?? 1,
+      minSpendMinor: (settings['min_spend_minor'] as num?)?.toInt() ?? 0,
     );
   }
 }
@@ -559,6 +629,25 @@ class CommerceRepository {
           body: jsonEncode({'office': office, 'code': code}),
         )
         .timeout(_timeout);
+  }
+
+  /// Find members by name, phone, card number or email.
+  ///
+  /// A regular is known by name and a card scheme is claimed by scanning, so
+  /// exact-phone lookup alone left the clerk unable to find a customer standing
+  /// in front of them. Returns an empty list rather than throwing when nothing
+  /// matches — no match is an answer, not a failure.
+  Future<List<LoyaltyCustomer>> searchLoyalty(String query) async {
+    final res = await _client
+        .get(Uri.parse(
+            '$apiBase/api/loyalty/search?$_officeParam'
+            '&q=${Uri.encodeComponent(query)}'))
+        .timeout(_timeout);
+    if (res.statusCode != 200) return const [];
+    return (jsonDecode(res.body) as List)
+        .cast<Map<String, dynamic>>()
+        .map(LoyaltyCustomer.fromJson)
+        .toList();
   }
 
   Future<LoyaltyCustomer> loyaltyByPhone(String phone) async {

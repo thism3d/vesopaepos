@@ -8,6 +8,7 @@ class TenderEntry {
     required this.amountMinor,
     this.reference,
     this.entryMode,
+    this.cashbackMinor = 0,
     this.gratuityMinor = 0,
   });
 
@@ -23,7 +24,19 @@ class TenderEntry {
   /// Z report must be able to tell them apart.
   final String? entryMode;
 
+  /// Cash handed back out of the drawer at the reader's request.
+  ///
+  /// Cashback is added on the card machine, not on the till, so the till only
+  /// learns of it from the transaction result. It has to be recorded or the
+  /// drawer is short by exactly this much at cash-up with nothing to explain it.
+  final int cashbackMinor;
+
+  /// Gratuity the customer added — on the till, or at the reader.
   final int gratuityMinor;
+
+  /// What the card was actually charged: the amount against the bill plus
+  /// anything the customer added at the machine.
+  int get chargedMinor => amountMinor + cashbackMinor + gratuityMinor;
 
   String get label => kind.label;
 }

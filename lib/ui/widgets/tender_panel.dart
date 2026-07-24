@@ -60,6 +60,21 @@ class TenderPanel extends StatelessWidget {
     return state.dueNowMinor;
   }
 
+  /// Whether the keyed amount is a *part* payment rather than the whole
+  /// balance. A venue can turn part-payment by card off — some do, because two
+  /// card fees on one bill costs them more than the convenience is worth — and
+  /// the setting existed but was never honoured, so the switch did nothing.
+  bool get _isPartial => _amount > 0 && _amount < state.dueNowMinor;
+
+  /// What the card keys will take, or null when they should be refused.
+  int? get _cardAmount {
+    if (state.dueNowMinor <= 0) return null;
+    if (_isPartial && !settings.allowPartialCard) return null;
+    // Never charge a card more than is owed: an overpayment on a card is a
+    // refund to arrange, not change to hand over.
+    return _amount > state.dueNowMinor ? state.dueNowMinor : _amount;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -146,14 +161,30 @@ class TenderPanel extends StatelessWidget {
             Expanded(
               child: _TenderButton(
                 icon: Icons.credit_card,
-                label: 'Card',
-                onTap: due > 0 ? () => onTender(TenderKind.card, _amount) : null,
+                label: _isPartial && settings.allowPartialCard
+                    ? 'Part card'
+                    : 'Card',
+                onTap: _cardAmount == null
+                    ? null
+                    : () => onTender(TenderKind.card, _cardAmount!),
                 tone: _ChipTone.primary,
                 compact: compact,
               ),
             ),
           ],
         ),
+
+        // Say why the card keys are refused, rather than leaving a dead button
+        // the clerk taps twice before giving up.
+        if (due > 0 && _isPartial && !settings.allowPartialCard)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              'Part payment by card is switched off for this venue — the card '
+              'has to cover the whole ${_money(due)}.',
+              style: theme.textTheme.bodySmall?.copyWith(color: scheme.error),
+            ),
+          ),
         const SizedBox(height: 8),
 
         // Manual card: keyed into the reader by hand, for a card that will not
@@ -165,9 +196,9 @@ class TenderPanel extends StatelessWidget {
               child: _TenderButton(
                 icon: Icons.dialpad,
                 label: 'Manual card',
-                onTap: due > 0
-                    ? () => onTender(TenderKind.manualCard, _amount)
-                    : null,
+                onTap: _cardAmount == null
+                    ? null
+                    : () => onTender(TenderKind.manualCard, _cardAmount!),
                 compact: compact,
               ),
             ),
