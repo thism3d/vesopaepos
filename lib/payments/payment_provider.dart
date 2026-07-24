@@ -3,6 +3,24 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+/// What the till should do about a payment whose outcome is unknown.
+///
+/// A timed-out card transaction may or may not have taken the money, so it can
+/// never be booked as either. Connect's integration checklist is specific about
+/// what happens next, and it depends on whether the reader is still reachable —
+/// which is a different instruction to the clerk in each case.
+enum PaymentUncertainty {
+  /// Not uncertain: the outcome is known.
+  none,
+
+  /// The reader is available. Ask the clerk to check the last transaction on
+  /// the PDQ (or pull a duplicate) and record it if it went through.
+  checkTerminal,
+
+  /// The reader is busy or gone. Something is wrong with the device itself.
+  terminalUnreachable,
+}
+
 /// Outcome of asking a payment method for money.
 class PaymentResult {
   const PaymentResult({
@@ -10,6 +28,10 @@ class PaymentResult {
     required this.amountMinor,
     this.reference,
     this.message,
+    this.cashbackMinor = 0,
+    this.gratuityMinor = 0,
+    this.uncertainty = PaymentUncertainty.none,
+    this.receiptLines = const [],
   });
 
   final bool approved;
@@ -19,6 +41,28 @@ class PaymentResult {
   /// reconciliation and refunds.
   final String? reference;
   final String? message;
+
+  /// Cashback the customer took at the reader, on top of the sale.
+  ///
+  /// Added on the PDQ, not on the till, so the till only learns about it from
+  /// the result — and it has to be recorded, or the drawer and the Z report
+  /// disagree with the bank by exactly this much.
+  final int cashbackMinor;
+
+  /// Gratuity the customer added at the reader. Same reasoning: the till did
+  /// not ask for it, so it must read it back off the transaction.
+  final int gratuityMinor;
+
+  /// Whether the till can trust this outcome at all.
+  final PaymentUncertainty uncertainty;
+
+  /// The acquirer's own receipt text, when it supplies one. A card receipt has
+  /// to carry the acquirer's wording verbatim.
+  final List<String> receiptLines;
+
+  /// What the customer was actually charged: the sale, plus anything they added
+  /// at the reader.
+  int get chargedMinor => amountMinor + cashbackMinor + gratuityMinor;
 }
 
 /// A created Dojo payment intent.
@@ -122,10 +166,23 @@ class DojoSession {
   }
 }
 
-/// A way of taking money. Cash needs no device; card goes to Dojo.
+/// A way of taking money. Cash needs no device; card goes to the acquirer.
 abstract class PaymentProvider {
   String get method;
-  Future<PaymentResult> take(int amountMinor, {String? orderId});
+
+  /// Take [amountMinor].
+  ///
+  /// [manual] asks for the **keyed** route rather than a presented card: the
+  /// number is typed in instead of dipped or tapped. It is a mode of the same
+  /// payment rather than a separate provider because every acquirer expresses
+  /// it differently — Connect flags the transaction card-not-present so the PDQ
+  /// opens its keypad, Dojo routes it to card-entry UI instead of the reader —
+  /// and the till should not have to know which.
+  Future<PaymentResult> take(
+    int amountMinor, {
+    String? orderId,
+    bool manual = false,
+  });
 }
 
 /// Cash. Always succeeds — the clerk has the money in their hand.
@@ -134,7 +191,11 @@ class CashProvider implements PaymentProvider {
   String get method => 'cash';
 
   @override
-  Future<PaymentResult> take(int amountMinor, {String? orderId}) async {
+  Future<PaymentResult> take(
+    int amountMinor, {
+    String? orderId,
+    bool manual = false,
+  }) async {
     return PaymentResult(approved: true, amountMinor: amountMinor);
   }
 }
@@ -194,18 +255,32 @@ class DojoProvider implements PaymentProvider {
         'Content-Type': 'application/json',
       };
 
-  /// Create the intent. Returns its id and client session secret.
+  /// Create the intent.
   ///
   /// The request body uses PascalCase `Amount`/`Value`/`CurrencyCode`: the Dojo
   /// API rejects `{"amount": …}` with "The Amount field is required." Verified
-  /// against the sandbox — this shape returns a `pi_sandbox_…` intent with a
-  /// `clientSessionSecret`, which the native drop-in SDK needs.
+  /// against the sandbox — this shape returns a `pi_sandbox_…` intent.
+  ///
+  /// [withClientSecret] fetches the drop-in's client session secret as well.
+  /// Creating an intent does **not** return one: the response carries a zeroed
+  /// `clientSessionSecretExpirationDate` and no secret at all, and it has to be
+  /// asked for separately ([refreshClientSecret]). Only the native card-entry
+  /// path needs it, so the terminal route does not pay for the extra round trip.
+  ///
+  /// [cardHolderNotPresent] marks the payment as keyed rather than presented.
+  /// It carries different interchange and different liability, so a manual card
+  /// must be flagged as one rather than passed off as a dipped card.
   ///
   /// Dojo ignores `Idempotency-Key` — posting the same body twice creates two
   /// distinct intents. The caller must therefore hold onto the id it gets back
   /// and reuse it on retry, or a flaky connection will charge the customer
   /// twice. That is why this is separate from [confirm].
-  Future<DojoIntent> createIntent(int amountMinor, {String? orderId}) async {
+  Future<DojoIntent> createIntent(
+    int amountMinor, {
+    String? orderId,
+    bool withClientSecret = false,
+    bool cardHolderNotPresent = false,
+  }) async {
     final res = await _client
         .post(
           Uri.parse('$baseUrl/payment-intents'),
@@ -214,6 +289,7 @@ class DojoProvider implements PaymentProvider {
             'Amount': {'Value': amountMinor, 'CurrencyCode': 'GBP'},
             'Reference': orderId ?? 'vesopa',
             'CaptureMode': 'Auto',
+            if (cardHolderNotPresent) 'CardHolderNotPresent': true,
           }),
         )
         .timeout(const Duration(seconds: 30));
@@ -223,15 +299,43 @@ class DojoProvider implements PaymentProvider {
     }
 
     final json = jsonDecode(res.body) as Map<String, dynamic>;
-    return DojoIntent(
+    final intent = DojoIntent(
       id: json['id'] as String,
-      // Dojo returns the secret as `clientSessionSecret`; the SDK calls the same
-      // value `clientSecret`.
       clientSecret: json['clientSessionSecret'] as String?,
       // Hosted checkout for this intent — what the desktop till opens when it
       // has no card reader attached.
       paymentLink: json['paymentLink'] as String?,
     );
+
+    if (!withClientSecret || intent.clientSecret != null) return intent;
+    return DojoIntent(
+      id: intent.id,
+      clientSecret: await refreshClientSecret(intent.id),
+      paymentLink: intent.paymentLink,
+    );
+  }
+
+  /// Mint a client session secret for an existing intent.
+  ///
+  /// This is the step the drop-in SDK cannot work without, and it is a separate
+  /// call by design — the secret is short-lived (30 minutes) and is handed to
+  /// the customer's device, unlike the API key. Verified against the sandbox:
+  /// creating an intent yields no secret; this returns one.
+  Future<String?> refreshClientSecret(String intentId) async {
+    final res = await _client
+        .post(
+          Uri.parse('$baseUrl/payment-intents/$intentId/refresh-client-session-secret'),
+          headers: _headers,
+        )
+        .timeout(const Duration(seconds: 30));
+
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw DojoException(
+        'Could not start card entry for this payment: ${res.body}',
+      );
+    }
+    final json = jsonDecode(res.body) as Map<String, dynamic>;
+    return json['clientSessionSecret'] as String?;
   }
 
   /// Read an intent's current state.
@@ -485,14 +589,23 @@ class DojoProvider implements PaymentProvider {
       (resellerId?.isNotEmpty ?? false);
 
   @override
-  Future<PaymentResult> take(int amountMinor, {String? orderId}) async {
+  Future<PaymentResult> take(
+    int amountMinor, {
+    String? orderId,
+    bool manual = false,
+  }) async {
     try {
       final intent = await createIntent(amountMinor, orderId: orderId);
 
       // With a reader configured the payment is driven through a terminal
       // session; polling the intent alone would wait forever, because nothing
       // would ever present the card.
-      if (canUseTerminal) {
+      //
+      // A keyed card deliberately skips the reader even on a till that has
+      // one: a card machine can only take a card that is physically there, and
+      // "manual" exists precisely for a chip that will not read or a customer
+      // on the telephone.
+      if (canUseTerminal && !manual) {
         final sessionId = await startTerminalSession(intent.id);
         return awaitTerminal(sessionId, intent.id, amountMinor);
       }

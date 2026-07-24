@@ -4,6 +4,8 @@
 -keep class com.cardinalcommerce.dependencies.internal.bouncycastle.** { *; }
 -keep class com.cardinalcommerce.dependencies.internal.nimbusds.** { *; }
 -keep class tech.dojo.pay.** { *; }
+-dontwarn com.cardinalcommerce.**
+
 
 # This app reaches the SDK reflectively (see DojoPaymentHandler); keep our own
 # handler and the Kotlin function interface used for the result callback.

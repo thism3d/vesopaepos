@@ -54,9 +54,14 @@ class DesktopDojoProvider implements PaymentProvider {
   /// created fresh for each payment.
   void Function(DojoStage stage)? onStageChanged;
 
-  /// Opens the hosted checkout page. Injectable so tests do not launch a
-  /// browser; defaults to the platform's URL handler.
-  final Future<bool> Function(String url)? openCheckout;
+  /// Opens the hosted checkout page.
+  ///
+  /// Settable rather than final because the till supplies it per payment: the
+  /// provider is built once by Riverpod, but the thing that shows the page is
+  /// the payment screen, which wants to render the checkout *inside* the app
+  /// (see `CardCheckoutPage`). Left unset it falls back to the system browser,
+  /// which is also what tests rely on to avoid launching one.
+  Future<bool> Function(String url)? openCheckout;
 
   final Duration pollTimeout;
 
@@ -77,13 +82,26 @@ class DesktopDojoProvider implements PaymentProvider {
   String get method => 'card';
 
   @override
-  Future<PaymentResult> take(int amountMinor, {String? orderId}) async {
+  Future<PaymentResult> take(
+    int amountMinor, {
+    String? orderId,
+    bool manual = false,
+  }) async {
     _cancelled = false;
     try {
       onStageChanged?.call(DojoStage.creating);
-      final intent = await intents.createIntent(amountMinor, orderId: orderId);
+      final useTerminal = mode == DesktopCardMode.terminal && !manual;
+      final intent = await intents.createIntent(
+        amountMinor,
+        orderId: orderId,
+        // Anything not going to a reader is keyed by the customer on the
+        // checkout page, and must be flagged as card-not-present.
+        cardHolderNotPresent: !useTerminal,
+      );
 
-      if (mode == DesktopCardMode.terminal) {
+      // A keyed card goes to the checkout even where a reader is attached: the
+      // reader can only take a card that is in the room.
+      if (useTerminal) {
         // A reader on the counter: the payment runs as a terminal session, and
         // that session — not the intent — is what says whether money was taken.
         onStageChanged?.call(DojoStage.sendingToTerminal);

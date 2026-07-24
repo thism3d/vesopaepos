@@ -10,7 +10,7 @@
       android/app/src/debug/res/xml/network_security_config.xml.
 
       To point a real device at a TLS server:
-        flutter build apk --dart-define=API_BASE=https://api.vesopa.co.uk
+        flutter build apk - -dart-define=API_BASE=https://api.vesopa.co.uk
     -->
     <base-config cleartextTrafficPermitted="false"/>
 </network-security-config>

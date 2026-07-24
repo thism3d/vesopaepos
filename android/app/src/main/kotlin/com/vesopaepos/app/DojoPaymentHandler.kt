@@ -52,6 +52,12 @@ object DojoPaymentHandler {
         val clientSecret = call.argument<String>("clientSecret")
         val sandbox = call.argument<Boolean>("sandbox") ?: true
 
+        // Google Pay. Absent unless the venue has entered its wallet merchant
+        // details, and the drop-in hides the button when it is not passed.
+        val walletMerchantName = call.argument<String>("walletMerchantName")
+        val walletMerchantId = call.argument<String>("walletMerchantId") ?: ""
+        val walletGatewayMerchantId = call.argument<String>("walletGatewayMerchantId")
+
         if (paymentId == null || clientSecret == null) {
             result.error("bad_args", "paymentId and clientSecret are required", null)
             return
@@ -65,7 +71,15 @@ object DojoPaymentHandler {
 
         try {
             pending = result
-            startNativePayment(activity, paymentId, clientSecret, sandbox)
+            startNativePayment(
+                activity,
+                paymentId,
+                clientSecret,
+                sandbox,
+                walletMerchantName,
+                walletMerchantId,
+                walletGatewayMerchantId,
+            )
         } catch (t: Throwable) {
             pending = null
             result.error("dojo_error", t.message ?: "Dojo SDK error", null)
@@ -84,11 +98,17 @@ object DojoPaymentHandler {
         paymentId: String,
         clientSecret: String,
         sandbox: Boolean,
+        walletMerchantName: String?,
+        walletMerchantId: String,
+        walletGatewayMerchantId: String?,
     ) {
         val dropInClass = Class.forName("tech.dojo.pay.uisdk.DojoSDKDropInUI")
         val dropIn = dropInClass.getField("INSTANCE").get(null)
 
-        // dojoSDKDebugConfig = DojoSDKDebugConfig(null, sandbox, sandbox)
+        // dojoSDKDebugConfig = DojoSDKDebugConfig(null, sandbox, sandbox).
+        // The third argument is `isSandboxWallet`, which is what puts Google Pay
+        // into WalletConstants.ENVIRONMENT_TEST — without it a sandbox till
+        // would ask Google for a real, chargeable card.
         val debugConfigClass =
             Class.forName("tech.dojo.pay.sdk.card.entities.DojoSDKDebugConfig")
         val debugConfig = debugConfigClass
@@ -101,17 +121,91 @@ object DojoPaymentHandler {
         dropInClass.getMethod("setDojoSDKDebugConfig", debugConfigClass)
             .invoke(dropIn, debugConfig)
 
-        // DojoPaymentFlowParams(paymentId, clientSecret) — remaining args default.
+        val gPayConfigClass =
+            Class.forName("tech.dojo.pay.sdk.card.entities.DojoGPayConfig")
+        val gPayConfig = buildGPayConfig(
+            gPayConfigClass,
+            walletMerchantName,
+            walletMerchantId,
+            walletGatewayMerchantId,
+        )
+
+        // DojoPaymentFlowParams(paymentId, clientSecret, gPayConfig, paymentType).
+        // The full four-argument constructor is used rather than an overload so
+        // the wallet can be passed; a null gPayConfig is exactly what the
+        // shorter constructor would have defaulted to, and the drop-in then
+        // simply does not offer Google Pay.
+        val paymentTypeClass =
+            Class.forName("tech.dojo.pay.uisdk.entities.DojoPaymentType")
+        val paymentCard = paymentTypeClass
+            .getMethod("valueOf", String::class.java)
+            .invoke(null, "PAYMENT_CARD")
+
         val paramsClass =
             Class.forName("tech.dojo.pay.uisdk.entities.DojoPaymentFlowParams")
         val params = paramsClass
-            .getConstructor(String::class.java, String::class.java)
-            .newInstance(paymentId, clientSecret)
+            .getConstructor(
+                String::class.java,
+                String::class.java,
+                gPayConfigClass,
+                paymentTypeClass,
+            )
+            .newInstance(paymentId, clientSecret, gPayConfig, paymentCard)
 
         // startUIPaymentFlowForResult(activity, params) → onActivityResult.
         dropInClass
             .getMethod("startUIPaymentFlowForResult", Activity::class.java, paramsClass)
             .invoke(dropIn, activity, params)
+    }
+
+    /**
+     * Build Dojo's Google Pay config, or null when the venue has not set up a
+     * wallet.
+     *
+     * The gateway merchant id is the deciding field: it is what Google encrypts
+     * the card token against, so without it the sheet would open and then fail
+     * at authorisation — worse than never showing the button.
+     *
+     * DojoGPayConfig(collectShipping, allowedCountryCodesForShipping,
+     *   collectBilling, collectEmailAddress, collectPhoneNumber, merchantName,
+     *   merchantId, gatewayMerchantId, allowedCardNetworks)
+     *
+     * Nothing extra is collected: a till already has the customer in front of
+     * it, and asking Google for a billing address slows the queue for data the
+     * venue does not use.
+     */
+    private fun buildGPayConfig(
+        gPayConfigClass: Class<*>,
+        merchantName: String?,
+        merchantId: String,
+        gatewayMerchantId: String?,
+    ): Any? {
+        if (merchantName.isNullOrBlank() || gatewayMerchantId.isNullOrBlank()) {
+            return null
+        }
+
+        val schemesClass =
+            Class.forName("tech.dojo.pay.sdk.card.entities.CardsSchemes")
+        val networks = listOf("VISA", "MASTERCARD", "MAESTRO", "AMEX").map {
+            schemesClass.getMethod("valueOf", String::class.java).invoke(null, it)
+        }
+
+        return gPayConfigClass
+            .getConstructor(
+                Boolean::class.javaPrimitiveType,
+                List::class.java,
+                Boolean::class.javaPrimitiveType,
+                Boolean::class.javaPrimitiveType,
+                Boolean::class.javaPrimitiveType,
+                String::class.java,
+                String::class.java,
+                String::class.java,
+                List::class.java,
+            )
+            .newInstance(
+                false, null, false, false, false,
+                merchantName, merchantId, gatewayMerchantId, networks,
+            )
     }
 
     /** Called from MainActivity.onActivityResult. Parses the SDK result and

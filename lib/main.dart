@@ -16,6 +16,8 @@ import 'data/order_repository.dart';
 import 'data/session_repository.dart';
 import 'data/sync_service.dart';
 import 'data/table_repository.dart';
+import 'payments/connect_pac.dart';
+import 'payments/connect_ws.dart';
 import 'payments/dojo_config.dart';
 import 'payments/dojo_desktop.dart';
 import 'payments/dojo_native.dart';
@@ -98,92 +100,139 @@ final floorPlanProvider = FutureProvider<List<FloorRoom>>((ref) async {
   return repo.load();
 });
 
-/// Card payments, built from the terminal's runtime Dojo config
-/// ([dojoConfigProvider]) rather than a build-time flag — so a till already
-/// installed on Android can have its sandbox key entered in Settings without a
-/// rebuild. Null until a key is present, so a till without one shows cash only
-/// instead of failing at the moment of payment.
+/// The REST client for whichever acquirer this till is configured against.
+///
+/// Which one is decided by the **base URL**, because Dojo and Paymentsense
+/// Connect are two different APIs behind one brand: Connect gives each merchant
+/// their own host and drives the PDQ directly, Dojo shares one host and routes
+/// by the key. Null until both a key and a URL are present.
+({DojoProvider? dojo, ConnectPacProvider? connect})? _cardClients(
+  DojoConfig? config, {
+  required bool keyed,
+}) {
+  if (config == null || !config.configured) return null;
+
+  final key = config.apiKey.trim();
+  final terminal = config.terminalId.trim();
+  final softwareHouse = config.softwareHouseId.trim();
+  final reseller = config.resellerId.trim();
+
+  if (config.platform == CardPlatform.connect) {
+    // Connect keeps the reader for both routes: a keyed sale is the same
+    // terminal transaction with `cardholderNotPresent` set, which sends the PDQ
+    // straight to its "Key card number" screen. There is no other card surface
+    // on a Connect account, so dropping the TID for the keyed route would leave
+    // the button with nothing to talk to.
+    return (
+      dojo: null,
+      connect: ConnectPacProvider(
+        baseUrl: config.normalisedBaseUrl,
+        apiKey: key,
+        terminalId: terminal.isEmpty ? null : terminal,
+        softwareHouseId: softwareHouse.isEmpty ? null : softwareHouse,
+        installerId: reseller.isEmpty ? null : reseller,
+      )
+        // The socket is the preferred transport: the reader pushes each prompt
+        // as it happens rather than the till polling for it once a second. The
+        // provider falls back to REST on its own if this will not open, so a
+        // venue is never left unable to take a card.
+        ..socket = ConnectSocket(
+          baseUrl: config.normalisedBaseUrl,
+          apiKey: key,
+          softwareHouseId: softwareHouse.isEmpty ? null : softwareHouse,
+          installerId: reseller.isEmpty ? null : reseller,
+        ),
+    );
+  }
+
+  return (
+    dojo: DojoProvider(
+      apiKey: key,
+      baseUrl: config.normalisedBaseUrl,
+      // A keyed card must never reach for the reader, even on a till that has
+      // one paired: a card machine can only take a card that is in the room.
+      terminalId: keyed || terminal.isEmpty ? null : terminal,
+      softwareHouseId: softwareHouse.isEmpty ? null : softwareHouse,
+      resellerId: reseller.isEmpty ? null : reseller,
+    ),
+    connect: null,
+  );
+}
+
+/// **Card** — a card the customer presents. Always the card machine where one
+/// is configured, on Android and on Windows alike: that is what integrated
+/// payments are for, and it is the only route that takes a chip or a tap.
+///
+/// Built from the terminal's runtime config ([dojoConfigProvider]) rather than
+/// a build-time flag, so a till already installed can have its credentials
+/// entered in Settings without a rebuild. Null until they are, so a till
+/// without them shows cash only instead of failing at the moment of payment.
+///
+/// With no reader configured there is nothing to present a card *to*, so this
+/// falls back to the same card-entry route as [manualCardProvider] rather than
+/// leaving the Card button dead. Settings says plainly which of the two is
+/// live.
 final dojoProvider = Provider<PaymentProvider?>((ref) {
   final config = ref.watch(dojoConfigProvider).value;
-  if (config == null || !config.configured) return null;
+  final clients = _cardClients(config, keyed: false);
+  if (clients == null) return null;
 
-  // The REST provider creates the payment intent and, on desktop, drives the
-  // whole flow. It always exists.
-  final rest = DojoProvider(
-    apiKey: config.apiKey.trim(),
-    baseUrl: config.baseUrl,
-    terminalId: config.terminalId.trim().isEmpty
-        ? null
-        : config.terminalId.trim(),
-    softwareHouseId: config.softwareHouseId.trim().isEmpty
-        ? null
-        : config.softwareHouseId.trim(),
-    resellerId: config.resellerId.trim().isEmpty
-        ? null
-        : config.resellerId.trim(),
-  );
+  final connect = clients.connect;
+  if (connect != null) return connect;
 
-  // A card machine on the counter wins on every platform: if the venue has a
-  // reader, that is how the card should be taken, not by keying it into the
-  // screen. `rest` drives the terminal session directly.
+  final rest = clients.dojo!;
+  // A reader on the counter drives the sale directly, on every platform.
   if (rest.canUseTerminal) return rest;
 
-  // No reader. On Android the card is presented through Dojo's native drop-in
-  // SDK (card entry + 3-D Secure). The native provider reuses `rest` for intent
-  // creation and falls back to it if the SDK is not bundled.
-  if (Platform.isAndroid) {
-    return NativeDojoProvider(intents: rest, isSandbox: config.isSandboxKey);
-  }
-
-  // Desktop tills (the Windows touch-screen EPOS) have no Dojo SDK, so the card
-  // is presented either by a physical reader or by Dojo's hosted checkout —
-  // see DesktopDojoProvider. Plain REST polling on its own presents no card at
-  // all, which is what left the till stuck on "Waiting for the card…".
-  if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
-    return DesktopDojoProvider(intents: rest);
-  }
-
-  return rest;
+  return _keyedFallback(rest, config!);
 });
 
-/// Card payments where the card is **keyed in** rather than presented.
+/// **Manual card** — the number is keyed rather than presented, for a chip that
+/// will not read, a telephone order, or a card taken from a booking. Recorded
+/// separately because it carries different liability from a dipped card.
 ///
-/// Deliberately skips the terminal path that [dojoProvider] prefers. A card
-/// machine can only take a card that is physically there; "manual card" is for
-/// a chip that will not read, a telephone order, or a card taken from a
-/// booking — so it routes to the same card-entry product the till used before
-/// readers were supported:
+/// Where the keying happens is the acquirer's business, not the till's:
 ///
-///   * Android — Dojo's native drop-in SDK, which presents its own card form.
-///   * Desktop — Dojo's hosted checkout in a browser window.
-///
-/// Returns null when Dojo is not configured at all, so the button can be
-/// refused cleanly rather than failing at the moment of payment.
+///   * Connect — on the PDQ itself, via `cardholderNotPresent`.
+///   * Dojo on Android — the native drop-in SDK's own card form
+///     (`tech.dojo.pay:uisdk`), in the app.
+///   * Dojo on Windows — Dojo publish no desktop card SDK (`Dojo.Net` is a
+///     server-side `PaymentIntentsClient` with no UI), so it is the hosted
+///     checkout, rendered inside the till by `CardCheckoutPage` rather than
+///     handed to a browser.
 final manualCardProvider = Provider<PaymentProvider?>((ref) {
   final config = ref.watch(dojoConfigProvider).value;
-  if (config == null || !config.configured) return null;
+  final clients = _cardClients(config, keyed: true);
+  if (clients == null) return null;
 
-  // No terminalId: this provider must never reach for the card machine, even
-  // on a till that has one paired.
-  final rest = DojoProvider(
-    apiKey: config.apiKey.trim(),
-    baseUrl: config.baseUrl,
-    softwareHouseId: config.softwareHouseId.trim().isEmpty
-        ? null
-        : config.softwareHouseId.trim(),
-    resellerId: config.resellerId.trim().isEmpty
-        ? null
-        : config.resellerId.trim(),
-  );
+  final connect = clients.connect;
+  if (connect != null) return connect;
 
+  return _keyedFallback(clients.dojo!, config!);
+});
+
+/// Card entry with no reader involved: the native drop-in on Android, the
+/// hosted checkout on desktop. Plain REST polling is deliberately not an
+/// option — it presents no card at all, which is what once left the till stuck
+/// on "Waiting for the card…".
+PaymentProvider _keyedFallback(DojoProvider rest, DojoConfig config) {
   if (Platform.isAndroid) {
-    return NativeDojoProvider(intents: rest, isSandbox: config.isSandboxKey);
+    return NativeDojoProvider(
+      intents: rest,
+      isSandbox: config.isSandboxKey,
+      // Google Pay rides along with the drop-in: same sheet, same result code.
+      // Passed unconditionally — blank values are how the SDK is told there is
+      // no wallet, so there is nothing to branch on here.
+      walletMerchantName: config.walletMerchantName.trim(),
+      walletMerchantId: config.walletMerchantId.trim(),
+      walletGatewayMerchantId: config.walletGatewayMerchantId.trim(),
+    );
   }
   if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
     return DesktopDojoProvider(intents: rest);
   }
   return rest;
-});
+}
 
 /// Who is signed into this terminal.
 final sessionProvider = Provider<Session>(

@@ -28,6 +28,9 @@ class NativeDojoProvider implements PaymentProvider {
   NativeDojoProvider({
     required this.intents,
     required this.isSandbox,
+    this.walletMerchantName = '',
+    this.walletMerchantId = '',
+    this.walletGatewayMerchantId = '',
     MethodChannel? channel,
   }) : _channel = channel ?? const MethodChannel('vesopa/dojo');
 
@@ -36,8 +39,16 @@ class NativeDojoProvider implements PaymentProvider {
   final DojoProvider intents;
 
   /// Passed to the SDK's debug config so a `sk_sandbox_` key completes in the
-  /// sandbox environment.
+  /// sandbox environment — for the card *and* for Google Pay, which otherwise
+  /// asks the customer for a real chargeable card on a test till.
   final bool isSandbox;
+
+  /// Google Pay merchant details. The drop-in shows a Google Pay button when it
+  /// is handed these and hides it when it is not, so leaving them blank is how
+  /// a venue without a wallet gets a card-only checkout.
+  final String walletMerchantName;
+  final String walletMerchantId;
+  final String walletGatewayMerchantId;
 
   final MethodChannel _channel;
 
@@ -50,11 +61,29 @@ class NativeDojoProvider implements PaymentProvider {
   static const _declined = 5;
   static const _userClosed = 7780;
 
+  /// [manual] is accepted but not acted on: the drop-in *is* keyed entry, so
+  /// there is nothing else for a manual card to route to on Android.
   @override
-  Future<PaymentResult> take(int amountMinor, {String? orderId}) async {
+  Future<PaymentResult> take(
+    int amountMinor, {
+    String? orderId,
+    bool manual = false,
+  }) async {
     try {
-      // 1. Create the intent (REST) to obtain the client session secret.
-      final intent = await intents.createIntent(amountMinor, orderId: orderId);
+      // 1. Create the intent, and mint the client session secret with it.
+      //
+      // The secret is a second REST call — creating an intent does not return
+      // one. Without `withClientSecret` this path fails at the next line with
+      // "Dojo did not return a client secret", which is exactly what it used
+      // to do.
+      final intent = await intents.createIntent(
+        amountMinor,
+        orderId: orderId,
+        withClientSecret: true,
+        // The drop-in *is* keyed entry, so every payment through it is
+        // card-not-present regardless of which button started it.
+        cardHolderNotPresent: true,
+      );
       if (intent.clientSecret == null) {
         return PaymentResult(
           approved: false,
@@ -70,6 +99,9 @@ class NativeDojoProvider implements PaymentProvider {
         'paymentId': intent.id,
         'clientSecret': intent.clientSecret,
         'sandbox': isSandbox,
+        'walletMerchantName': walletMerchantName,
+        'walletMerchantId': walletMerchantId,
+        'walletGatewayMerchantId': walletGatewayMerchantId,
       });
 
       // 3. Map the SDK result. Anything other than SUCCESSFUL is not money in.
@@ -94,7 +126,7 @@ class NativeDojoProvider implements PaymentProvider {
     } on MissingPluginException {
       // The native SDK is not bundled on this platform (e.g. desktop). Fall back
       // to the REST provider so the till still takes card where it can.
-      return intents.take(amountMinor, orderId: orderId);
+      return intents.take(amountMinor, orderId: orderId, manual: manual);
     } on PlatformException catch (e) {
       // A native-side error is NOT an approval — never record it as paid.
       return PaymentResult(
