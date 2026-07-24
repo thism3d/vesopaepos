@@ -53,6 +53,17 @@ dependencies:
   pdf: ^3.12.0
   printing: ^5.14.3
   url_launcher: ^6.3.0
+  # In-app card entry. The hosted checkout is rendered inside the till rather
+  # than handed to the system browser: a clerk who has to alt-tab to another
+  # window mid-service loses the sale on screen, and on a kiosked Windows till
+  # there may be no browser to hand it to at all.
+  #
+  # Two packages because there is no one webview: `webview_flutter` is the
+  # first-party Android/iOS one, `webview_windows` wraps WebView2 on the desktop
+  # till. Both are optional at runtime — see CardCheckoutPage, which falls back
+  # to the system browser if either fails to start.
+  webview_flutter: ^4.13.0
+  webview_windows: ^0.4.0
 
 dev_dependencies:
   flutter_test:
@@ -69,24 +80,33 @@ dev_dependencies:
   flutter_launcher_icons: ^0.14.4
   msix: ^3.18.0
 
-# Windows Store packaging (`dart run msix:create`).
+# Microsoft Store packaging. Build with `dart run msix:create --store`.
 #
-# The identity values come from Partner Center and must match the registered
-# app exactly, or the Store rejects the upload:
-#   * identity_name / publisher_display_name — as reserved in Partner Center
-#   * publisher — the Windows publisher ID (CN=…), NOT the display name
+# The three identity values below are assigned by the Store (Partner Center ->
+# Product -> Product identity) and must match it character for character, or
+# the upload is rejected. They are not ours to choose:
 #
-# The certificate is only used for *sideloading* a signed MSIX (a demo machine,
-# or the till before Store distribution). For a Store submission Microsoft signs
-# the package themselves, so CI builds unsigned and lets the Store do it — which
-# is also why no .pfx is committed here.
+#   Package/Identity/Name                  -> identity_name
+#   Package/Identity/Publisher             -> publisher
+#   Package/Properties/PublisherDisplayName-> publisher_display_name
+#
+# Note publisher is a GUID, *not* the company name — that is what the Store
+# issues. And the display name is "Ltd", not "Limited"; it reads like a typo
+# but Partner Center is authoritative and a mismatch fails the upload.
+#
+# No certificate appears here on purpose: Microsoft signs Store packages
+# themselves, so `--store` produces an unsigned package and any certificate_path
+# / certificate_password would be both unused and a secret in source control.
+# Signing is only needed for sideloading, which this config no longer does.
 msix_config:
-  display_name: VESOPA EPOS
-  publisher_display_name: Vesopa EPOS Limited
-  identity_name: com.vesopaepos.app
+  display_name: VESOPA
+  publisher_display_name: Vesopa EPOS Ltd
+  identity_name: MeirionDavies.Vesopa
   publisher: CN=3AD172E6-2CBA-4B09-AD50-B52C88D57FB3
-  # MSIX versions are always four parts and the last must be 0 for the Store.
-  msix_version: 1.0.0.0
+  # Four parts, and the Store requires the last to be 0. A version can never be
+  # reused, so bump this for every submission — including a resubmission after
+  # a failed certification.
+  msix_version: 1.0.2.0
   logo_path: windows\runner\resources\app_icon.ico
   capabilities: internetClient, privateNetworkClientServer
   languages: en-us
@@ -94,6 +114,9 @@ msix_config:
   # deep-linked as vesopa:// (used for returning from the Dojo checkout window).
   execution_alias: vesopa
   protocol_activation: vesopa
+  # Both irrelevant to a Store package: Microsoft handles trust, and a till that
+  # launches itself on boot invites certification questions we do not need on a
+  # first submission. Revisit enable_at_startup once the app is through review.
   install_certificate: false
   enable_at_startup: false
 

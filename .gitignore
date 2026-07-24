@@ -43,3 +43,20 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Signing material. This repo is public — a committed key/cert/password is a
+# published one. Generated locally by tool/new-signing-cert.ps1; keep the
+# password in a password manager, never here.
+/keys/
+*.pfx
+*.p12
+*.jks
+*.keystore
+key.properties
+keyseposapp.crt
+keyseposapp.csr
+keyseposapp.key
+
+# Windows IDE/build scratch, not portable between machines.
+windows/runner/.vs/
+windows/runner/out/

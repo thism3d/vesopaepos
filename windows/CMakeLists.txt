@@ -10,6 +10,16 @@ set(BINARY_NAME "vesopa_epos")
 # versions of CMake.
 cmake_policy(VERSION 3.14...3.25)
 
+# webview_windows 0.4.0 calls add_custom_command(TARGET ... DEPENDS ...), which
+# CMake 3.31+ flags under policy CMP0175 ("rejects invalid arguments"). It is a
+# third-party plugin file we do not control, the DEPENDS is harmless there, and
+# the NEW behaviour would turn it into a hard error — so pin this one policy to
+# OLD before the plugins are added, keeping the configure step clean without
+# touching any modern policy. Guarded so it is a no-op on older CMake.
+if(POLICY CMP0175)
+  set(CMAKE_POLICY_DEFAULT_CMP0175 OLD)
+endif()
+
 # Define build configuration option.
 get_property(IS_MULTICONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
 if(IS_MULTICONFIG)
