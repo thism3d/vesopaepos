@@ -32,9 +32,11 @@ class LiveReceipt extends StatelessWidget {
     this.covers,
     this.clerkName,
     this.onTapLine,
-    this.onRemoveLine,
+    this.onEditLine,
+    this.selectedLineIds = const {},
     this.showHeader = true,
     this.emptyMessage = 'No items yet',
+    this.aboveTotals,
   });
 
   final BasketTotals totals;
@@ -49,28 +51,55 @@ class LiveReceipt extends StatelessWidget {
   final int? covers;
   final String? clerkName;
 
+  /// Picks a line out, or puts it back — tapping is symmetric.
   final void Function(PricedLine line)? onTapLine;
-  final void Function(PricedLine line)? onRemoveLine;
+
+  /// Opens the item box for a line. Surfaced as a pencil on the selected row.
+  final void Function(PricedLine line)? onEditLine;
+
+  /// Lines the clerk has picked out, by line id. A selected line is what Void
+  /// acts on, so it has to be unmistakable at a glance on a busy counter —
+  /// hence a filled band and a tick, not a faint tint.
+  final Set<String> selectedLineIds;
 
   final bool showHeader;
   final String emptyMessage;
+
+  /// Slotted in directly above Subtotal. The sale screen puts the quantity
+  /// stepper for a single picked line here, so the control sits with the money
+  /// it is about to change rather than in a dialog somewhere else.
+  final Widget? aboveTotals;
+
+  /// How many items should be readable at once without scrolling.
+  ///
+  /// The venue's number, from a 15-inch EPOS panel: fifteen items covers all but
+  /// the largest table, and a clerk who has to scroll to see the bill they are
+  /// reading out cannot check it against the table.
+  static const _targetVisibleLines = 15;
+
+  /// The type scale, sized from the room available rather than hardcoded.
+  ///
+  /// A fixed font size cannot satisfy "bigger text" and "fifteen items" at the
+  /// same time on every panel — on 768px those two demands pull in opposite
+  /// directions, and on a 1080p till a size chosen for 768px is needlessly small.
+  /// So the row height is derived: divide the space by fifteen, and take the
+  /// largest legible type that fits it.
+  ///
+  /// The clamp floor is the old 14pt, so this can only ever make the check
+  /// *bigger* than it was, never smaller on a cramped screen — it would rather
+  /// scroll at 14pt than shrink to 11pt to avoid scrolling.
+  static double _bodySizeFor(double listHeight) {
+    // Vertical padding (3 top + 3 bottom) plus the line-height multiplier.
+    const chromePerRow = 6.0;
+    const lineHeight = 1.35;
+    final perRow = listHeight / _targetVisibleLines;
+    return ((perRow - chromePerRow) / lineHeight).clamp(14.0, 22.0);
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-
-    // Monospace, because a receipt's columns have to line up and proportional
-    // digits make a column of prices look ragged.
-    final body = theme.textTheme.bodyMedium?.copyWith(
-      fontFamily: 'monospace',
-      fontFamilyFallback: const ['Menlo', 'Consolas', 'Courier New'],
-      height: 1.35,
-    );
-    final small = body?.copyWith(
-      fontSize: (body.fontSize ?? 14) - 2,
-      color: scheme.onSurfaceVariant,
-    );
 
     return Container(
       decoration: BoxDecoration(
@@ -79,53 +108,184 @@ class LiveReceipt extends StatelessWidget {
         border: Border.all(color: scheme.outlineVariant),
       ),
       clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: [
-          if (showHeader) _Header(branding: branding, small: small),
+      // The type scale needs to know how much room the list actually got, which
+      // is only known after the header and the totals have taken their share —
+      // hence measuring here rather than guessing from the screen size.
+      child: LayoutBuilder(
+        builder: (context, box) {
+          // Monospace, because a receipt's columns have to line up and
+          // proportional digits make a column of prices look ragged.
+          //
+          // The list gets what is left after the header and the totals block.
+          // Those are measured as fractions rather than pixels because both grow
+          // with the type inside them.
+          final listHeight = box.maxHeight * (showHeader ? 0.62 : 0.74);
+          final size = _bodySizeFor(listHeight);
 
-          Expanded(
-            child: totals.lines.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.receipt_long_outlined,
-                            size: 40, color: scheme.outlineVariant),
-                        const SizedBox(height: 10),
-                        Text(emptyMessage,
-                            style: theme.textTheme.bodyMedium
-                                ?.copyWith(color: scheme.onSurfaceVariant)),
-                      ],
-                    ),
-                  )
-                : ListView(
-                    padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
-                    children: [
-                      _Context(
-                        tableNumber: tableNumber,
-                        covers: covers,
-                        clerkName: clerkName,
-                        customerName: customerName,
-                        style: small,
-                      ),
-                      const SizedBox(height: 4),
-                      for (final line in totals.lines)
-                        _LineRow(
-                          line: line,
-                          body: body,
-                          small: small,
-                          onTap: onTapLine,
-                          onRemove: onRemoveLine,
+          final body = theme.textTheme.bodyMedium?.copyWith(
+            fontFamily: 'monospace',
+            fontFamilyFallback: const ['Menlo', 'Consolas', 'Courier New'],
+            height: 1.35,
+            fontSize: size,
+          );
+          final small = body?.copyWith(
+            // Kept proportional rather than a flat -2, so the secondary type
+            // grows with the body instead of collapsing towards it.
+            fontSize: size * 0.82,
+            color: scheme.onSurfaceVariant,
+          );
+
+          return Column(
+            children: [
+              if (showHeader) _Header(branding: branding, small: small),
+
+              Expanded(
+                child: totals.lines.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.receipt_long_outlined,
+                                size: 40, color: scheme.outlineVariant),
+                            const SizedBox(height: 10),
+                            Text(emptyMessage,
+                                style: theme.textTheme.bodyMedium
+                                    ?.copyWith(color: scheme.onSurfaceVariant)),
+                          ],
                         ),
-                    ],
-                  ),
-          ),
+                      )
+                    : ListView(
+                        padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+                        children: [
+                          _Context(
+                            tableNumber: tableNumber,
+                            covers: covers,
+                            clerkName: clerkName,
+                            customerName: customerName,
+                            style: small,
+                          ),
+                          const SizedBox(height: 4),
+                          for (final entry in _blocks(totals.lines)) ...[
+                            if (entry.header != null)
+                              _StaffHeading(
+                                label: entry.header!,
+                                style: small,
+                              ),
+                            for (final line in entry.lines)
+                              _LineRow(
+                                line: line,
+                                body: body,
+                                small: small,
+                                onTap: onTapLine,
+                                onEdit: onEditLine,
+                                selected: selectedLineIds.contains(line.id),
+                              ),
+                          ],
+                        ],
+                      ),
+              ),
 
-          _Totals(
-            totals: totals,
-            tender: tender,
-            body: body,
-            small: small,
+              ?aboveTotals,
+
+              _Totals(
+                totals: totals,
+                tender: tender,
+                body: body,
+                small: small,
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// Group the bill into runs of items added by the same person.
+  ///
+  /// A single-author bill — which is every walk-in sale — gets one block with no
+  /// header, so the ordinary case looks exactly as it did before. A header only
+  /// appears where there is genuinely something to distinguish: a table that two
+  /// people have served, which is the case the venue asked about.
+  ///
+  /// Runs, not a grouping: items stay in the order they were rung up. Sorting a
+  /// bill by who rang it would reorder a kitchen ticket, and the order items were
+  /// called in is information in its own right.
+  static List<_Block> _blocks(List<PricedLine> lines) {
+    final blocks = <_Block>[];
+
+    for (final line in lines) {
+      final who = line.addedBy?.trim();
+      final open = blocks.isEmpty ? null : blocks.last;
+
+      if (open != null && open.who == who) {
+        open.lines.add(line);
+      } else {
+        blocks.add(_Block(who: who, at: line.addedAt, lines: [line]));
+      }
+    }
+
+    // One block covering the whole bill needs no heading — there is nothing to
+    // tell it apart from.
+    final attributed = blocks.where((b) => b.who?.isNotEmpty ?? false).length;
+    if (blocks.length <= 1 || attributed == 0) {
+      for (final b in blocks) {
+        b.header = null;
+      }
+      return blocks;
+    }
+
+    for (final b in blocks) {
+      final who = b.who;
+      if (who == null || who.isEmpty) {
+        b.header = null;
+        continue;
+      }
+      final at = b.at;
+      b.header = at == null ? who : '$who  ·  ${DateFormat('HH:mm').format(at)}';
+    }
+    return blocks;
+  }
+}
+
+/// A run of items on the check, and the staff heading above it.
+class _Block {
+  _Block({required this.who, required this.at, required this.lines});
+
+  final String? who;
+  final DateTime? at;
+  final List<PricedLine> lines;
+
+  /// The line drawn above the run, or null when there is nothing worth saying.
+  String? header;
+}
+
+/// `Sam · 19:42` above the items that person put on the bill.
+class _StaffHeading extends StatelessWidget {
+  const _StaffHeading({required this.label, this.style});
+
+  final String label;
+  final TextStyle? style;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 3),
+      child: Row(
+        children: [
+          Text(
+            label,
+            style: style?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: 8),
+          // A rule out to the edge, so the heading reads as the start of a
+          // section rather than as another item on the bill.
+          Expanded(
+            child: Divider(height: 1, color: scheme.outlineVariant),
           ),
         ],
       ),
@@ -215,14 +375,26 @@ class _LineRow extends StatelessWidget {
     this.body,
     this.small,
     this.onTap,
-    this.onRemove,
+    this.onEdit,
+    this.selected = false,
   });
 
   final PricedLine line;
   final TextStyle? body;
   final TextStyle? small;
+
+  /// Picks the line out, or puts it back. Tapping is symmetric on purpose: a
+  /// clerk who taps the wrong row fixes it by tapping it again, which is the
+  /// only thing anyone tries.
   final void Function(PricedLine line)? onTap;
-  final void Function(PricedLine line)? onRemove;
+
+  /// Opens the item box. Reached from a pencil that appears on the row once it
+  /// is selected — deliberately a visible control rather than a long press,
+  /// because a hidden gesture has to be taught to every new member of staff and
+  /// costs half a second every time it is used.
+  final void Function(PricedLine line)? onEdit;
+
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
@@ -230,9 +402,28 @@ class _LineRow extends StatelessWidget {
 
     return InkWell(
       onTap: onTap == null ? null : () => onTap!(line),
-      onLongPress: onRemove == null ? null : () => onRemove!(line),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Container(
+        // Selection is drawn as a filled band with a lime edge rather than a
+        // tint: the clerk is about to void this line, and "which row is picked"
+        // must survive a glance across a counter.
+        decoration: selected
+            ? BoxDecoration(
+                color: scheme.primary.withValues(alpha: 0.20),
+                borderRadius: BorderRadius.circular(5),
+                border: Border(
+                  left: BorderSide(color: scheme.primary, width: 3),
+                ),
+              )
+            : null,
+        // Padding is constant so the text does not shift as a row is picked
+        // out, and the band simply appears around it.
+        //
+        // This used to be `padding: selected ? 5 : 0` cancelled by a matching
+        // `margin: -5`, to make the band bleed past the content edge. Container
+        // asserts `margin.isNonNegative`, so selecting any line threw in a
+        // debug build — invisible in release, where assertions are stripped,
+        // which is why it survived this long.
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -241,16 +432,62 @@ class _LineRow extends StatelessWidget {
               children: [
                 SizedBox(
                   width: 28,
-                  child: Text(_qty(line.quantity), style: body),
+                  child: selected
+                      ? Icon(Icons.check_circle,
+                          size: 15, color: scheme.primary)
+                      : Text(_qty(line.quantity), style: body),
                 ),
-                Expanded(child: Text(line.name, style: body)),
+                Expanded(
+                  child: Text(
+                    line.name,
+                    style: selected
+                        ? body?.copyWith(fontWeight: FontWeight.w700)
+                        : body,
+                  ),
+                ),
                 const SizedBox(width: 8),
                 Text(
                   _money(line.discounted ? line.netMinor : line.grossMinor),
                   style: body?.copyWith(fontWeight: FontWeight.w600),
                 ),
+
+                // The door to the item box, and only shown on the row it acts
+                // on. Sized to 40px square — a receipt row is narrow, but this
+                // still has to be hittable with a thumb on a busy counter.
+                if (selected && onEdit != null)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4),
+                    child: Material(
+                      color: scheme.primary,
+                      borderRadius: BorderRadius.circular(7),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(7),
+                        onTap: () => onEdit!(line),
+                        child: Tooltip(
+                          message: 'Quantity, discount, note',
+                          child: SizedBox(
+                            width: 40,
+                            height: 40,
+                            child: Icon(
+                              Icons.edit,
+                              size: 18,
+                              color: scheme.onPrimary,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
+
+            // The quantity moves out of the gutter when a tick takes its place,
+            // so a selected "3x Latte" still shows it is three.
+            if (selected)
+              Padding(
+                padding: const EdgeInsets.only(left: 28),
+                child: Text('${_qty(line.quantity)} × selected', style: small),
+              ),
 
             // Unit price, when it is not obvious from a single item.
             if (line.quantity != 1)
@@ -361,6 +598,11 @@ class _Totals extends StatelessWidget {
                   colour: scheme.tertiary, style: small),
             if (t.manualDiscountMinor > 0)
               row('Discount', -t.manualDiscountMinor,
+                  colour: scheme.tertiary, style: small),
+            // Named rather than lumped in with the manual discount: the clerk
+            // needs to see that attaching the customer actually did something.
+            if (t.customerDiscountMinor > 0)
+              row('Customer discount', -t.customerDiscountMinor,
                   colour: scheme.tertiary, style: small),
             if (t.voucherMinor > 0)
               row('Voucher', -t.voucherMinor,

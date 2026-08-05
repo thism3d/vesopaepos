@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local/database.dart';
 import '../../main.dart';
 import '../theme.dart';
+import '../void_dialog.dart';
 import 'basket_panel.dart' show money;
 
 /// Tap a basket line to open this: change the quantity, discount it, note it,
@@ -139,10 +142,7 @@ class _LineEditorState extends ConsumerState<_LineEditor> {
               icon: Icons.delete_outline,
               label: 'Remove from bill',
               danger: true,
-              onTap: () async {
-                await _repo.removeLine(widget.orderId, line.id);
-                if (context.mounted) Navigator.pop(context);
-              },
+              onTap: _removeLine,
             ),
           ],
         ),
@@ -172,6 +172,34 @@ class _LineEditorState extends ConsumerState<_LineEditor> {
       );
       if (mounted) Navigator.pop(context);
     }
+  }
+
+  /// Take this line off the bill.
+  ///
+  /// Goes through the same void dialog as the Void key, and writes the same
+  /// audit record. It used to delete the row outright: a clerk could take an
+  /// item — and the money for it — off a check from here with no reason and
+  /// nothing recorded, while the identical action one screen away demanded
+  /// both. One bill cannot have two rules about removing from it.
+  Future<void> _removeLine() async {
+    final reason = await showVoidDialog(
+      context,
+      ref,
+      itemCount: 1,
+      itemSummary: widget.line.name,
+    );
+    if (reason == null) return;
+
+    await _repo.voidLines(
+      widget.orderId,
+      lineIds: {widget.line.id},
+      reason: reason,
+    );
+    // Push the audit record now rather than waiting for the periodic flush, so
+    // the back office sees the reversal in real time — same as the Void key.
+    unawaited(ref.read(syncServiceProvider).flush());
+
+    if (mounted) Navigator.pop(context);
   }
 
   Future<void> _promptNote() async {
@@ -279,7 +307,7 @@ class _ActionTile extends StatelessWidget {
     final color = danger ? Pos.red : null;
     return ListTile(
       contentPadding: EdgeInsets.zero,
-      leading: Icon(icon, color: danger ? Pos.red : Pos.brand),
+      leading: Icon(icon, color: danger ? Pos.red : Pos.brandDeep),
       title: Text(label, style: TextStyle(color: color)),
       subtitle: value == null ? null : Text(value!),
       onTap: onTap,

@@ -6,18 +6,20 @@ import '../data/commerce.dart';
 String _money(int minor) =>
     NumberFormat.currency(locale: 'en_GB', symbol: '£').format(minor / 100);
 
-/// Confirm a tender before it is taken.
+/// Confirm a card payment before the reader is started.
 ///
-/// Every other route to money on this screen already has a confirmation built
-/// in — a gift card is looked up, a voucher is validated, points are chosen —
-/// but Cash and Card went straight through on a single tap. On a touch till
-/// that is one mis-hit away from a card payment nobody asked for, or a cash
-/// sale rung up at the wrong amount and then needing a void.
+/// Card only, as of v1.3.1.0. Cash used to come through here too, and no longer
+/// does: it is the fastest tender at a counter, a dialog per sale was costing the
+/// venue more than it saved, and the two things this dialog told them — the
+/// change to hand over and any shortfall — are now shown where they are actually
+/// needed. The change box appears when the sale settles; the shortfall sits on
+/// the tender panel while the amount is still being keyed.
 ///
-/// So this is the last step: it states the method, the amount, and what the
-/// tap will actually do to the bill — settle it, leave a balance, or hand back
-/// change — because those are the three things the clerk is about to have to
-/// tell the customer.
+/// Card kept its confirmation because the failure is not symmetrical. A cash
+/// mis-hit is corrected on the till; a card mis-hit has already started a live
+/// transaction that has to be voided at the machine. Manual card is worse again —
+/// a keyed card number carries different liability from a presented one — so it
+/// gets the extra warning below.
 ///
 /// Returns true to go ahead.
 Future<bool> confirmTender(

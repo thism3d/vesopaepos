@@ -80,7 +80,7 @@ class _SignInPageState extends ConsumerState<SignInPage> {
                   children: [
                     Image.asset(
                       dark
-                          ? 'assets/brand/vesopa_logo_monochrome.png'
+                          ? 'assets/brand/vesopa_logo_on_dark.png'
                           : 'assets/brand/vesopa_logo.png',
                       height: 40,
                       errorBuilder: (_, _, _) => const SizedBox.shrink(),
@@ -163,6 +163,7 @@ class _SignInPageState extends ConsumerState<SignInPage> {
                     FilledButton(
                       style: FilledButton.styleFrom(
                         backgroundColor: Pos.brand,
+                        foregroundColor: Pos.onBrand,
                         padding: const EdgeInsets.symmetric(vertical: 15),
                       ),
                       onPressed: _busy ? null : _submit,
@@ -172,7 +173,7 @@ class _SignInPageState extends ConsumerState<SignInPage> {
                               height: 20,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: Colors.white,
+                                color: Pos.onBrand,
                               ),
                             )
                           : const Text(

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/customer_repository.dart';
 import '../main.dart';
 import 'theme.dart';
+import 'widgets/pos_message.dart';
 
 final customerRepoProvider = Provider<CustomerRepository>(
   (ref) => CustomerRepository(
@@ -142,7 +143,7 @@ class _CustomerPickerState extends ConsumerState<_CustomerPicker> {
                                           ? c.name[0].toUpperCase()
                                           : '?',
                                       style:
-                                          const TextStyle(color: Pos.brand),
+                                          const TextStyle(color: Pos.brandDeep),
                                     ),
                                   ),
                                   title: Text(c.name),
@@ -156,7 +157,7 @@ class _CustomerPickerState extends ConsumerState<_CustomerPicker> {
                                           label: Text(c.discountLabel),
                                           backgroundColor: Pos.brandSoft,
                                           labelStyle: const TextStyle(
-                                            color: Pos.brand,
+                                            color: Pos.brandDeep,
                                             fontSize: 12,
                                           ),
                                         )
@@ -321,8 +322,7 @@ class _NewCustomerDialogState extends ConsumerState<_NewCustomerDialog> {
     } catch (e) {
       if (mounted) {
         setState(() => _busy = false);
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('$e')));
+        PosMessenger.error(context, '$e');
       }
     }
   }

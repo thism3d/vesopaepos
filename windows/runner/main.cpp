@@ -27,7 +27,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
-  if (!window.Create(L"vesopa_epos", origin, size)) {
+  // The window caption, shown in the title bar, the taskbar tooltip and
+  // Alt-Tab. Flutter seeds this from the pubspec package name, so it read
+  // "vesopa_epos" — the project identifier, not the product.
+  if (!window.Create(L"Vesopa EPOS", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

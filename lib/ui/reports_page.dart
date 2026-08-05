@@ -5,6 +5,7 @@ import '../data/session_repository.dart';
 import '../main.dart';
 import 'layout.dart';
 import 'theme.dart';
+import 'widgets/pos_message.dart';
 import 'widgets/basket_panel.dart' show money;
 
 final xReportProvider = FutureProvider<TillReport>(
@@ -121,8 +122,9 @@ class ReportsPage extends ConsumerWidget {
     ref.invalidate(xReportProvider);
 
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Z #${z.zNumber} — ${money(z.grossMinor)} taken.')),
+    PosMessenger.success(
+      context,
+      'Z #${z.zNumber} — ${money(z.grossMinor)} taken.',
     );
   }
 }

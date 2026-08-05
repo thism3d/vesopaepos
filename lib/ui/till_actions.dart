@@ -8,6 +8,7 @@ import '../printing/receipt_builder.dart';
 import 'print_receipt_sheet.dart';
 import 'printers_page.dart';
 import 'receipts_page.dart' show receiptListProvider;
+import 'widgets/pos_message.dart';
 
 /// The till functions that touch hardware or reprint paper.
 ///
@@ -139,7 +140,7 @@ abstract final class TillActions {
         covers: order.covers,
         // Not closed yet — this is what the bill looks like now.
         closedAt: DateTime.now(),
-        clerkName: session.name,
+        clerkName: ref.read(servedByProvider),
         customerName: order.customerName,
         orderNote: order.notes,
       ),
@@ -170,7 +171,7 @@ abstract final class TillActions {
   }
 
   static void _toast(BuildContext context, String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    PosMessenger.info(context, message);
   }
 
   /// A dialog rather than a snackbar when the clerk has to *do* something: a

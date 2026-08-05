@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/session_controller.dart';
+import '../data/staff_session.dart';
 import '../data/sync_service.dart';
 import '../main.dart';
 import 'layout.dart';
 import 'about_page.dart';
 import 'functions_page.dart';
 import 'logout_dialog.dart';
+import 'nav_panel_controller.dart';
 import 'placeholder_page.dart';
 import 'products_page.dart';
 import 'settings_page.dart';
@@ -29,6 +31,10 @@ class PosShell extends ConsumerStatefulWidget {
 class _PosShellState extends ConsumerState<PosShell> {
   int _index = 0;
   String? _orderId;
+
+  /// Lets the desktop title bar's Settings button open the nav drawer, which is
+  /// otherwise only reachable from an AppBar's automatic hamburger.
+  final _scaffold = GlobalKey<ScaffoldState>();
 
   @override
   void initState() {
@@ -82,16 +88,94 @@ class _PosShellState extends ConsumerState<PosShell> {
         ? const Center(child: CircularProgressIndicator())
         : _page(orderId);
 
-    // Below desktop width the left rail would eat a third of the screen, so it
-    // becomes a drawer reached from the app bar instead.
-    if (context.useCompactNav) {
+    // Whether the side menu is fixed on screen or opens from the menu key is
+    // the operator's choice now — see NavPanelMode. Default (auto) is fixed on
+    // a desktop-width screen and tucked away below it.
+    final navMode =
+        ref.watch(navPanelControllerProvider).value ?? NavPanelMode.auto;
+    final pinned = navMode.isPinnedOn(context.layout);
+
+    // The drawer, for when the rail is not fixed. A fixed rail costs ~208px of
+    // width permanently, on the screen where the product grid and the bill are
+    // already competing for room; behind a menu key it costs nothing until it
+    // is wanted.
+    //
+    // Built only when it will be used: a Scaffold with a drawer it never opens
+    // still swallows the edge swipe, which on the Sale screen is the gesture
+    // that scrolls the category rail.
+    // Staff sign-on is only offered where the venue actually uses it — an office
+    // that has switched the idle screen's PIN off has no sign-on to end, and a
+    // dead "Sign off" key on the rail would be a question with no answer.
+    final staffSession = ref.watch(staffSessionProvider);
+    final usesSignOn = ref.watch(tillSettingsProvider).idleRequirePin &&
+        ref.watch(canSignOnProvider);
+    final onSignOff = usesSignOn && staffSession.signedOn
+        ? () => ref.read(staffSessionProvider.notifier).signOff()
+        : null;
+    // The same slot, carrying whichever of the pair currently applies.
+    final onSignOn = usesSignOn && !staffSession.signedOn
+        ? () => ref.read(staffSessionProvider.notifier).promptSignOn()
+        : null;
+
+    final drawer = pinned
+        ? null
+        : Drawer(
+            child: SafeArea(
+              child: PosNavRail(
+                selected: _index,
+                onSelect: (i) {
+                  setState(() => _index = i);
+                  Navigator.of(context).pop();
+                },
+                onLogout: () {
+                  Navigator.of(context).pop();
+                  _logout();
+                },
+                onSignOff: onSignOff == null
+                    ? null
+                    : () {
+                        Navigator.of(context).pop();
+                        onSignOff();
+                      },
+                onSignOn: onSignOn == null
+                    ? null
+                    : () {
+                        Navigator.of(context).pop();
+                        onSignOn();
+                      },
+              ),
+            ),
+          );
+
+    // The fixed rail has no drawer to close, so selecting must not pop — that
+    // would take the current route off the navigator instead.
+    final fixedRail = PosNavRail(
+      selected: _index,
+      onSelect: (i) => setState(() => _index = i),
+      onLogout: _logout,
+      onSignOff: onSignOff,
+      onSignOn: onSignOn,
+    );
+
+    if (context.useCompactNav && !pinned) {
       return Scaffold(
+        key: _scaffold,
         appBar: AppBar(
-          backgroundColor: Pos.chrome,
-          foregroundColor: Colors.white,
+          // Colours come from appBarTheme, which now follows the theme. They
+          // were hardcoded to the dark chrome here, which is why picking Day
+          // left a black bar over a white screen.
+          leading: IconButton(
+            icon: const Icon(Icons.settings),
+            tooltip: 'Settings & menu',
+            onPressed: () => _scaffold.currentState?.openDrawer(),
+          ),
           title: Row(
             children: [
-              Icon(navDestinations[_index].icon, size: 20, color: Pos.brand),
+              Icon(
+                navDestinations[_index].icon,
+                size: 20,
+                color: Theme.of(context).posBrandOnChrome,
+              ),
               const SizedBox(width: 10),
               Text(navDestinations[_index].label),
             ],
@@ -104,40 +188,38 @@ class _PosShellState extends ConsumerState<PosShell> {
           ],
           elevation: 0,
         ),
-        drawer: Drawer(
-          child: SafeArea(
-            child: PosNavRail(
-              selected: _index,
-              onSelect: (i) {
-                setState(() => _index = i);
-                Navigator.of(context).pop();
-              },
-              onLogout: () {
-                Navigator.of(context).pop();
-                _logout();
-              },
-            ),
-          ),
-        ),
+        drawer: drawer,
         body: body,
       );
     }
 
     return Scaffold(
+      key: _scaffold,
+      drawer: drawer,
       body: Column(
         children: [
-          const _TitleBar(),
+          _TitleBar(
+            section: navDestinations[_index],
+            // No menu key when the rail is already on screen: a button that
+            // opens a copy of what is visible beside it is noise.
+            onOpenMenu: pinned
+                ? null
+                : () => _scaffold.currentState?.openDrawer(),
+          ),
           Expanded(
-            child: Row(
-              children: [
-                PosNavRail(
-                  selected: _index,
-                  onSelect: (i) => setState(() => _index = i),
-                  onLogout: _logout,
-                ),
-                Expanded(child: body),
-              ],
-            ),
+            child: pinned
+                ? Row(
+                    children: [
+                      fixedRail,
+                      VerticalDivider(
+                        width: 1,
+                        thickness: 1,
+                        color: Theme.of(context).posLine,
+                      ),
+                      Expanded(child: body),
+                    ],
+                  )
+                : body,
           ),
         ],
       ),
@@ -237,28 +319,115 @@ class _PosShellState extends ConsumerState<PosShell> {
   }
 }
 
+/// The desktop title bar: the Settings key that opens the nav, the section the
+/// clerk is in, and the sync badge.
+///
+/// Taller than the 22px strip it replaces, because it now carries a real touch
+/// target — but it buys back the ~210px the fixed nav rail used to take off the
+/// width of every screen, which is the trade Meirion asked for.
 class _TitleBar extends StatelessWidget {
-  const _TitleBar();
+  const _TitleBar({required this.section, required this.onOpenMenu});
+
+  final NavDestination section;
+
+  /// Null when the nav rail is fixed on screen and there is no drawer to open.
+  final VoidCallback? onOpenMenu;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 22,
-      color: Pos.chrome,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      alignment: Alignment.centerLeft,
-      child: const Row(
-        children: [
-          Icon(Icons.point_of_sale, color: Colors.white, size: 13),
-          SizedBox(width: 6),
-          Text(
-            'VesopaEPOS',
-            style: TextStyle(color: Colors.white, fontSize: 12),
+    final theme = Theme.of(context);
+    // Follows the theme rather than being hardcoded to the dark chrome — the
+    // reason the bar stayed black with Day selected. See PosColors.posChrome.
+    final ink = theme.posOnChrome;
+
+    return Material(
+      color: theme.posChrome,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          // The light bar sits on a white page and needs a hairline to read as
+          // a bar at all; the dark one separates by contrast on its own.
+          border: theme.isDark
+              ? null
+              : Border(bottom: BorderSide(color: theme.posLine)),
+        ),
+        child: SizedBox(
+          height: 46,
+          child: Row(
+            children: [
+              const SizedBox(width: 4),
+              if (onOpenMenu != null)
+                IconButton(
+                  icon: Icon(Icons.settings, color: ink, size: 22),
+                  tooltip: 'Settings & menu',
+                  onPressed: onOpenMenu,
+                )
+              else
+                const SizedBox(width: 12),
+              const SizedBox(width: 2),
+              Icon(section.icon, color: theme.posBrandOnChrome, size: 18),
+              const SizedBox(width: 9),
+              Text(
+                section.label,
+                style: TextStyle(
+                  color: ink,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              // Whose shift this is. It settles the question the moment it is
+              // asked — "am I about to ring this onto my own name or the last
+              // person's?" — which matters once the check shows attribution.
+              const _SignedOnBadge(),
+              // The clerk needs to know at a glance whether the till is live with
+              // the back office or working offline with a backlog to send.
+              const SyncStatusBadge(),
+              const SizedBox(width: 14),
+            ],
           ),
-          Spacer(),
-          // The clerk needs to know at a glance whether the till is live with
-          // the back office or working offline with a backlog to send.
-          SyncStatusBadge(compact: true),
+        ),
+      ),
+    );
+  }
+}
+
+/// Who is on shift, for the desktop title bar.
+///
+/// Draws nothing at all when the venue does not use staff sign-on, rather than
+/// showing an empty slot or the word "nobody" — a venue that has switched the
+/// feature off should not have a hole in its chrome where it used to be.
+class _SignedOnBadge extends ConsumerWidget {
+  const _SignedOnBadge();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (!ref.watch(tillSettingsProvider).idleRequirePin) {
+      return const SizedBox.shrink();
+    }
+
+    final name = ref.watch(staffSessionProvider).name;
+    if (name == null) return const SizedBox.shrink();
+
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(right: 14),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.how_to_reg_outlined,
+            size: 14,
+            color: theme.posBrandOnChrome,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            name,
+            style: TextStyle(
+              color: theme.posOnChrome,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ],
       ),
     );
@@ -300,7 +469,9 @@ class SyncStatusBadge extends ConsumerWidget {
       _ => (Pos.green, 'Online', Icons.cloud_done),
     };
 
-    final foreground = compact ? Colors.white : color;
+    // The compact variant sits on the title bar, which is no longer always
+    // dark — white here would be white-on-near-white in Day.
+    final foreground = compact ? Theme.of(context).posOnChrome : color;
 
     return Tooltip(
       message: switch (status) {

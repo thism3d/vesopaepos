@@ -1,7 +1,9 @@
-import 'dart:io' show Platform;
+import 'dart:io' show File, Platform, exit;
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../config/constants.dart';
 import '../main.dart';
@@ -9,9 +11,12 @@ import '../payments/connect_pac.dart';
 import '../payments/dojo_config.dart';
 import '../payments/payment_provider.dart';
 import 'card_diagnostics_page.dart';
+import 'layout.dart';
+import 'nav_panel_controller.dart';
 import 'printers_page.dart';
 import 'theme.dart';
 import 'theme_controller.dart';
+import 'widgets/pos_message.dart';
 
 /// Terminal settings. Anything that belongs to the venue lives in the back
 /// office; what is here is specific to *this* screen — chiefly how it looks in
@@ -22,6 +27,8 @@ class SettingsPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final mode = ref.watch(themeControllerProvider).value ?? ThemeMode.dark;
+    final navMode =
+        ref.watch(navPanelControllerProvider).value ?? NavPanelMode.auto;
     final office = ref.watch(officeProvider);
     final api = ref.watch(apiBaseProvider);
 
@@ -68,7 +75,7 @@ class SettingsPage extends ConsumerWidget {
                 ])
                   RadioListTile<ThemeMode>(
                     value: option.$1,
-                    secondary: Icon(option.$3, color: Pos.brand),
+                    secondary: Icon(option.$3, color: Pos.brandDeep),
                     title: Text(option.$2),
                     subtitle: Text(
                       option.$4,
@@ -79,6 +86,55 @@ class SettingsPage extends ConsumerWidget {
             ),
           ),
         ),
+
+        const SizedBox(height: 28),
+        const _SectionTitle('Side menu'),
+        Card(
+          margin: EdgeInsets.zero,
+          child: RadioGroup<NavPanelMode>(
+            groupValue: navMode,
+            onChanged: (value) {
+              if (value != null) {
+                ref.read(navPanelControllerProvider.notifier).set(value);
+              }
+            },
+            child: Column(
+              children: [
+                for (final option in NavPanelMode.values)
+                  RadioListTile<NavPanelMode>(
+                    value: option,
+                    secondary: Icon(switch (option) {
+                      NavPanelMode.auto => Icons.auto_awesome_mosaic,
+                      NavPanelMode.fixed => Icons.view_sidebar,
+                      NavPanelMode.hidden => Icons.menu_open,
+                    }, color: Pos.brandDeep),
+                    title: Text(option.label),
+                    subtitle: Text(
+                      option.blurb,
+                      style: const TextStyle(fontSize: 12.5),
+                    ),
+                  ),
+                // Said here rather than left as a surprise: "Always show" on a
+                // phone still opens from the menu key, because 208px of
+                // navigation on a phone leaves no room to take a sale.
+                if (context.isPhone && navMode == NavPanelMode.fixed)
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(16, 0, 16, 14),
+                    child: Text(
+                      'This screen is too narrow to keep the menu on show, so '
+                      'it opens from the menu key here. It will stay on show '
+                      'on a tablet or a desktop till.',
+                      style: TextStyle(fontSize: 12.5),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 28),
+        const _SectionTitle('Idle screen'),
+        const _IdleImageCard(),
 
         const SizedBox(height: 28),
         const _SectionTitle('This terminal'),
@@ -107,9 +163,7 @@ class SettingsPage extends ConsumerWidget {
                     await sync.pullCatalogue();
                     await sync.pullDeals();
                     if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Catalogue refreshed.')),
-                      );
+                      PosMessenger.success(context, 'Catalogue refreshed.');
                     }
                   },
                   child: const Text('Refresh'),
@@ -126,7 +180,7 @@ class SettingsPage extends ConsumerWidget {
         Card(
           margin: EdgeInsets.zero,
           child: ListTile(
-            leading: const Icon(Icons.troubleshoot, color: Pos.brand),
+            leading: const Icon(Icons.troubleshoot, color: Pos.brandDeep),
             title: const Text('Card diagnostics'),
             subtitle: const Text(
               'Test the connection, list machines, and see exactly what the '
@@ -152,7 +206,7 @@ class SettingsPage extends ConsumerWidget {
                 padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
                 child: Row(
                   children: [
-                    Icon(Icons.print, color: Pos.brand),
+                    Icon(Icons.print, color: Pos.brandDeep),
                     SizedBox(width: 14),
                     Expanded(
                       child: Text(
@@ -200,8 +254,81 @@ class SettingsPage extends ConsumerWidget {
             ],
           ),
         ),
+
+        // ---- Closing the till ------------------------------------------
+        //
+        // The window has no X and no minimise button (see _lockWindowToKiosk
+        // in main.dart): a till a customer can minimise from across the
+        // counter, or close outright, stops taking money. That leaves this as
+        // the only way out, so it has to be here and it has to be findable.
+        if (_canQuit) ...[
+          const SizedBox(height: 28),
+          const _SectionTitle('Close the till'),
+          Card(
+            margin: EdgeInsets.zero,
+            child: ListTile(
+              leading: const Icon(Icons.power_settings_new, color: Pos.red),
+              title: const Text('Exit application'),
+              subtitle: const Text(
+                'Shuts the till down completely. Cash up first — any bill left '
+                'open stays open and will be waiting when you start again.',
+                style: TextStyle(fontSize: 12.5),
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => _confirmExit(context),
+            ),
+          ),
+        ],
+        const SizedBox(height: 24),
       ],
     );
+  }
+
+  /// Only desktop has a window to close. On Android and iOS the OS owns the
+  /// app's lifecycle and a self-quit button is both unnecessary and, on iOS,
+  /// grounds for rejection.
+  bool get _canQuit => Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+
+  /// Ask before quitting.
+  ///
+  /// This is one tap away from ending service, and the same finger that reaches
+  /// for Printing is inches from it — so the confirmation is not ceremony, it
+  /// is the thing standing between a mis-tap and a dark till.
+  Future<void> _confirmExit(BuildContext context) async {
+    final quit = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.power_settings_new, size: 30, color: Pos.red),
+        title: const Text('Exit Vesopa EPOS?'),
+        content: const Text(
+          'The till will close and stop taking sales until someone starts it '
+          'again.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Stay open'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: Pos.red),
+            child: const Text('Exit'),
+          ),
+        ],
+      ),
+    );
+
+    if (quit != true) return;
+
+    // destroy(), not close(): the window was made unclosable at startup, and a
+    // close request against it is simply ignored. destroy() tears it down
+    // regardless, and exit(0) is the backstop if the platform channel is not
+    // there for any reason.
+    try {
+      await windowManager.destroy();
+    } catch (_) {
+      exit(0);
+    }
   }
 }
 
@@ -307,14 +434,11 @@ class _DojoCard extends ConsumerWidget {
     if (saved == null) return;
     await ref.read(dojoConfigProvider.notifier).save(saved);
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            saved.configured
-                ? 'Card payments configured.'
-                : 'Card payments turned off.',
-          ),
-        ),
+      PosMessenger.success(
+        context,
+        saved.configured
+            ? 'Card payments configured.'
+            : 'Card payments turned off.',
       );
     }
   }
@@ -699,9 +823,7 @@ class _DojoEditorState extends State<_DojoEditor> {
                         _terminal.text.trim() == t.id
                             ? Icons.radio_button_checked
                             : Icons.radio_button_unchecked,
-                        color: _terminal.text.trim() == t.id
-                            ? Pos.brand
-                            : hint,
+                        color: _terminal.text.trim() == t.id ? Pos.brand : hint,
                       ),
                       onTap: () => setState(() => _terminal.text = t.id),
                       title: Text(t.label),
@@ -799,6 +921,116 @@ class _DojoEditorState extends State<_DojoEditor> {
   }
 }
 
+/// The idle-screen background for *this* terminal.
+///
+/// A per-terminal override of what the back office set, because it is a
+/// per-terminal decision: a venue with a screen in the window and one behind the
+/// bar may well not want the same picture on both.
+///
+/// The path is stored, not a copy of the file. If the operator later replaces the
+/// image at that path the till follows, which is what someone swapping a seasonal
+/// picture actually wants — and it means the till is not quietly accumulating
+/// duplicates of every background ever chosen.
+class _IdleImageCard extends ConsumerWidget {
+  const _IdleImageCard();
+
+  Future<void> _choose(BuildContext context, WidgetRef ref) async {
+    // Named the same way the back office names its uploads, so a manager who has
+    // seen one recognises the other.
+    const images = XTypeGroup(
+      label: 'Images',
+      extensions: <String>['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'],
+    );
+
+    try {
+      final file = await openFile(acceptedTypeGroups: const [images]);
+      if (file == null) return;
+      await ref.read(idleImageOverrideProvider.notifier).set(file.path);
+      if (context.mounted) {
+        PosMessenger.success(context, 'This terminal will use that picture.');
+      }
+    } catch (e) {
+      // A file dialog that cannot open is not worth crashing a till over.
+      if (context.mounted) {
+        PosMessenger.error(context, 'Could not open the file browser.\n\n$e');
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final override = ref.watch(idleImageOverrideProvider).value;
+    final settings = ref.watch(tillSettingsProvider);
+    final hasOverride = override != null && override.isNotEmpty;
+    final missing = hasOverride && !File(override).existsSync();
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.image_outlined, color: Pos.brandDeep),
+            title: Text(
+              hasOverride ? 'Chosen on this terminal' : 'From the back office',
+            ),
+            subtitle: Text(
+              switch ((hasOverride, missing, settings.idleImageUrl)) {
+                // Chosen here, but the file has since moved. Said plainly: the
+                // till is showing the back office's picture, not this one.
+                (true, true, _) =>
+                  'That file is no longer there, so the back office picture is '
+                      'being shown instead.\n$override',
+                // Non-null whenever hasOverride is true — that is what it tests.
+                (true, false, _) => override!,
+                (false, _, final url?) =>
+                  'Set for the whole venue in the back office.\n$url',
+                (false, _, null) =>
+                  'No picture set, so the till shows the built-in Vesopa screen.',
+              },
+              style: const TextStyle(fontSize: 12.5),
+            ),
+            isThreeLine: hasOverride || settings.idleImageUrl != null,
+          ),
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilledButton.icon(
+                  onPressed: () => _choose(context, ref),
+                  icon: const Icon(Icons.folder_open, size: 18),
+                  label: Text(
+                    hasOverride ? 'Choose another picture' : 'Choose a picture',
+                  ),
+                ),
+                if (hasOverride)
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      await ref
+                          .read(idleImageOverrideProvider.notifier)
+                          .set(null);
+                      if (context.mounted) {
+                        PosMessenger.info(
+                          context,
+                          'Back to the back office picture.',
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.undo, size: 18),
+                    label: const Text('Use the venue picture'),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _SectionTitle extends StatelessWidget {
   const _SectionTitle(this.text);
   final String text;
@@ -834,7 +1066,7 @@ class _Row extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListTile(
-      leading: Icon(icon, color: Pos.brand),
+      leading: Icon(icon, color: Pos.brandDeep),
       title: Text(label),
       subtitle: Text(value, style: const TextStyle(fontSize: 12.5)),
       trailing: trailing,

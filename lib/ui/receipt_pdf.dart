@@ -7,6 +7,7 @@ import 'package:pdf/widgets.dart' as pw;
 import '../data/branding.dart';
 import '../data/receipt_repository.dart';
 import '../printing/receipt_fonts.dart';
+import '../data/cash_tally.dart';
 
 String _rawMoney(int minor) =>
     NumberFormat.currency(locale: 'en_GB', symbol: '£').format(minor / 100);
@@ -279,8 +280,20 @@ Future<Uint8List> buildReceiptPdf(
           if (isBill)
             row('Due', money(s.totalMinor), bold: true)
           else ...[
-            for (final tender in r.tenders)
+            for (final tender in r.tenders) ...[
               row(_tenderLabel(tender.method), money(tender.amountMinor)),
+              // What was physically handed over, when the clerk counted notes
+              // in on the cash keys. The customer can check the receipt against
+              // what left their wallet, which a bare "Cash £60" does not allow.
+              if (CashTally.decode(tender.cashBreakdown).isNotEmpty)
+                pw.Padding(
+                  padding: const pw.EdgeInsets.only(left: 8, bottom: 1),
+                  child: pw.Text(
+                    t(CashTally.decode(tender.cashBreakdown).describe()),
+                    style: smallStyle,
+                  ),
+                ),
+            ],
             if (change > 0) row('Change', money(change), bold: true),
           ],
 
@@ -340,13 +353,10 @@ Future<Uint8List> buildReceiptPdf(
                   bold: true, size: base - 0.5),
           ],
 
-          // ---- Order note --------------------------------------------------
-          if (s.orderNote?.isNotEmpty ?? false) ...[
-            rule(),
-            pw.Text(t(s.orderNote!),
-                style: pw.TextStyle(
-                    fontSize: base - 1, fontStyle: pw.FontStyle.italic)),
-          ],
+          // No order-level note here by design. Notes are taken against the
+          // item they belong to and print under that line above; a single note
+          // at the foot of the bill could not say which dish it referred to,
+          // which is what made it useless to a kitchen and to the customer.
 
           rule(heavy: true),
 

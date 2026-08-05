@@ -26,11 +26,28 @@ class PosNavRail extends StatelessWidget {
     required this.selected,
     required this.onSelect,
     required this.onLogout,
+    this.onSignOff,
+    this.onSignOn,
   });
 
   final int selected;
   final ValueChanged<int> onSelect;
   final VoidCallback onLogout;
+
+  /// Ask for a PIN and start a shift. Shown in place of [onSignOff] while nobody
+  /// is on, so the slot always carries the one action that makes sense — the
+  /// operator never has to work out which of the two applies.
+  final VoidCallback? onSignOn;
+
+  /// Hand the till to the next member of staff. Null when the venue does not
+  /// use staff sign-on, in which case the key is not drawn at all.
+  ///
+  /// Deliberately a different act from [onLogout], and sitting above it: Sign off
+  /// hands over to a colleague and takes a second, Logout de-commissions the
+  /// terminal from the venue and needs a password. Two very different buttons
+  /// that read alike, so they are labelled for what they do rather than stacked
+  /// as a pair of exits.
+  final VoidCallback? onSignOff;
 
   @override
   Widget build(BuildContext context) {
@@ -56,6 +73,34 @@ class PosNavRail extends StatelessWidget {
               onTap: () => onSelect(i),
             ),
           const Spacer(),
+
+          // Sign Out, then a rule, then Logout.
+          //
+          // No name on the button: the title bar already shows who is on shift,
+          // and repeating it here made the label the longest thing on the rail
+          // for information the operator had just read.
+          //
+          // The rule matters more than it looks. These two sit next to each other
+          // and read alike, and they are not remotely the same act — one hands the
+          // till to a colleague, the other de-commissions the terminal from the
+          // venue and wants a password. Separating them is what stops the wrong
+          // one being tapped in a hurry.
+          if (onSignOff != null || onSignOn != null) ...[
+            _NavItem(
+              destination: onSignOff != null
+                  ? const NavDestination(Icons.how_to_reg_outlined, 'Sign Out')
+                  : const NavDestination(Icons.login, 'Sign On'),
+              active: false,
+              onTap: onSignOff ?? onSignOn!,
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 6, 20, 6),
+              child: Divider(
+                height: 1,
+                color: Theme.of(context).posLine,
+              ),
+            ),
+          ],
           _NavItem(
             destination: const NavDestination(Icons.logout, 'Logout'),
             active: false,
@@ -86,7 +131,7 @@ class _DrawerBrand extends StatelessWidget {
       alignment: Alignment.centerLeft,
       child: Image.asset(
         dark
-            ? 'assets/brand/vesopa_logo_monochrome.png'
+            ? 'assets/brand/vesopa_logo_on_dark.png'
             : 'assets/brand/vesopa_logo.png',
         height: 34,
         fit: BoxFit.contain,
@@ -131,7 +176,7 @@ class _NavItem extends StatelessWidget {
                 // Reads from the theme, so the labels stay legible in dark
                 // mode instead of turning black-on-black.
                 color: active
-                    ? Pos.brand
+                    ? Pos.brandDeep
                     : Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),
@@ -141,7 +186,7 @@ class _NavItem extends StatelessWidget {
               style: TextStyle(
                 fontSize: 15,
                 color: active
-                    ? Pos.brand
+                    ? Pos.brandDeep
                     : Theme.of(context).colorScheme.onSurface,
                 fontWeight: active ? FontWeight.w600 : FontWeight.normal,
               ),

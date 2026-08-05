@@ -10,6 +10,7 @@ import '../payments/connect_ws.dart';
 import '../payments/dojo_config.dart';
 import '../payments/payment_provider.dart';
 import 'card_checkout_page.dart';
+import 'widgets/pos_message.dart';
 
 /// One line in the diagnostics log.
 class _Entry {
@@ -217,9 +218,7 @@ class _CardDiagnosticsPageState extends ConsumerState<CardDiagnosticsPage> {
                           .map((e) => '${e.label}\n${e.detail}\n')
                           .join('\n'),
                     ));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Log copied.')),
-                    );
+                    PosMessenger.info(context, 'Log copied.');
                   },
           ),
         ],

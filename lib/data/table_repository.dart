@@ -181,47 +181,18 @@ class TableRepository {
     });
   }
 
-  /// Split the bill evenly between N people, as separate payable orders.
-  Future<List<String>> splitEvenly(String orderId, int ways) async {
-    if (ways < 2) throw ArgumentError('Need at least two ways to split.');
-
-    return _db.transaction(() async {
-      final source = await (_db.select(
-        _db.orders,
-      )..where((o) => o.id.equals(orderId))).getSingle();
-
-      final total = source.totalMinor;
-      final base = total ~/ ways;
-      // Pennies do not divide evenly. Give the remainder to the first bill
-      // rather than losing it — the parts must add back up to the whole.
-      final remainder = total - (base * ways);
-
-      final ids = <String>[];
-      for (var i = 0; i < ways; i++) {
-        final id = _uuid.v4();
-        final share = base + (i == 0 ? remainder : 0);
-        await _db
-            .into(_db.orders)
-            .insert(
-              OrdersCompanion.insert(
-                id: id,
-                status: const Value('open'),
-                tableNumber: Value(source.tableNumber),
-                clerkPin: Value(source.clerkPin),
-                splitFromOrderId: Value(orderId),
-                subtotalMinor: Value(share),
-                totalMinor: Value(share),
-              ),
-            );
-        ids.add(id);
-      }
-
-      // The original is superseded by its parts.
-      await (_db.update(_db.orders)..where((o) => o.id.equals(orderId))).write(
-        const OrdersCompanion(status: Value('void')),
-      );
-
-      return ids;
-    });
-  }
+  // There is deliberately no `splitEvenly` here any more.
+  //
+  // It used to write N new orders carrying only a `totalMinor` — no lines at
+  // all — and then void the source order, which was the one holding every item
+  // on the check. The result was exactly what was reported: the first share
+  // looked payable, and the rest of the bill vanished, because the items had
+  // been thrown away and the shares were empty shells. Nothing could reprice,
+  // reprint, or void them, and a recalculate would have zeroed them.
+  //
+  // Splitting a bill evenly is not a change to what was ordered, it is a change
+  // to how it is *paid* — so it belongs to the tender state, which already
+  // models it correctly (see TenderState.splitEqually: shares that track their
+  // own outstanding balance against one intact order). The tables screen now
+  // opens the payment screen with that split applied.
 }

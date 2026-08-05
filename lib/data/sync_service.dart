@@ -57,6 +57,29 @@ class SyncService {
   StreamSubscription<void>? _connectivitySub;
   Timer? _retryTimer;
 
+  /// Backoff state for socket reconnection.
+  ///
+  /// The socket used to be re-established only by the connectivity listener,
+  /// which fires on a network *change*. A socket dropped while the network
+  /// stayed up — a server restart, an nginx reload, or a proxy culling an idle
+  /// connection, which most do after 60s — left `_channel` null with nothing
+  /// scheduled to rebuild it. The terminal showed offline until the app was
+  /// restarted, even though the network was fine.
+  Timer? _reconnectTimer;
+  int _reconnectAttempts = 0;
+
+  /// True only once the handshake has actually completed.
+  ///
+  /// `WebSocketChannel.connect` is lazy: it returns a channel immediately and
+  /// reports failure later on the stream, so a non-null `_channel` never meant
+  /// the socket was up. Treating it as proof of life is what let an idle till
+  /// report "online" against a server it had never reached.
+  bool _socketLive = false;
+
+  /// Cancelled on dispose, and awaited nowhere — this guards against a late
+  /// `ready` completing after the service is gone.
+  bool _disposed = false;
+
   /// Whether the terminal currently has a live link to the back office: the
   /// socket is up and the last flush succeeded. Drives the online/offline badge
   /// on the till. Broadcast so the UI can listen without owning the service.
@@ -89,19 +112,79 @@ class SyncService {
       }
     });
 
-    _retryTimer = Timer.periodic(const Duration(seconds: 30), (_) => flush());
+    // The backstop. This used to call flush() alone, which drains the outbox
+    // but never rebuilds the socket — so a dropped connection stayed dropped.
+    // It now also reconnects (a no-op when the socket is already up) and, on a
+    // till with nothing queued, actively checks the server is reachable.
+    _retryTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      _connectWebSocket();
+      unawaited(flush());
+      unawaited(_probeServer());
+    });
+
     _connectWebSocket();
     unawaited(resync());
   }
 
+  /// Ask the server whether it is there.
+  ///
+  /// A quiet till has an empty outbox, so `flush()` sends nothing and proves
+  /// nothing. Without this the online badge could only ever be corrected by a
+  /// sale, which is precisely backwards: the operator needs to know the link is
+  /// down *before* they start taking money on it.
+  Future<void> _probeServer() async {
+    if (_disposed) return;
+    try {
+      final res = await http
+          .get(Uri.parse('$apiBase/health'))
+          .timeout(const Duration(seconds: 8));
+      final ok = res.statusCode >= 200 && res.statusCode < 300;
+      if (ok != _online) {
+        _online = ok;
+        _emit();
+      }
+      if (ok) _reconnectAttempts = 0;
+    } catch (_) {
+      if (_online) {
+        _online = false;
+        _emit();
+      }
+    }
+  }
+
+  /// Pulls the venue's staff list.
+  ///
+  /// Injected rather than built here because it needs the terminal token, which
+  /// belongs to the session and not to this service. Null until the app wires it
+  /// up, and a no-op on a terminal that has none.
+  ///
+  /// It hangs off [resync] deliberately. Staff used to be pulled by a one-shot
+  /// provider that ran at startup and then only when the socket happened to push
+  /// a `staff.updated` — so a till that started offline, or that was offline when
+  /// a name changed, kept the old list indefinitely. Everything else the till
+  /// caches is refreshed by this method, on a schedule that already handles
+  /// startup, reconnects and the 30-second backstop. Staff belongs in it.
+  Future<void> Function()? pullStaff;
+
   /// Full catch-up with the back office: push everything queued, then pull the
-  /// latest catalogue and deals. Runs on startup and on every reconnect, so a
-  /// spell offline never leaves the till selling from a stale price list.
+  /// latest catalogue, deals and staff. Runs on startup and on every reconnect,
+  /// so a spell offline never leaves the till selling from a stale price list or
+  /// signing people on against a stale staff list.
   Future<void> resync() async {
     _connectWebSocket();
     await flush();
     await pullCatalogue();
+    await pullDepartments();
     await pullDeals();
+    await pullDenominations();
+
+    // Last, and never allowed to break the rest: a till whose staff list will
+    // not come down must still get its prices.
+    try {
+      await pullStaff?.call();
+    } catch (_) {
+      // The cached list carries on working. See StaffRepository.
+    }
   }
 
   /// True while a flush is in flight, so the periodic timer, a reconnect and a
@@ -194,9 +277,11 @@ class SyncService {
       }
     }
 
-    // An empty queue that drained without error still means we are connected —
-    // the socket keeps that current, but a clean flush is the clearest signal.
-    if (entries.isEmpty && _channel != null) {
+    // An empty queue proves nothing on its own: nothing was sent. Only a socket
+    // whose handshake actually completed counts. This previously tested
+    // `_channel != null`, which is true the instant connect() is called — so a
+    // till that had never reached the server still showed itself online.
+    if (entries.isEmpty && _socketLive) {
       _online = true;
     }
     if (delivered || entries.isEmpty) _emit();
@@ -216,15 +301,36 @@ class SyncService {
   /// Server -> terminal push. Reconnects on drop; the till keeps working
   /// regardless of whether this is up.
   void _connectWebSocket() {
-    if (_channel != null) return;
+    if (_disposed || _channel != null) return;
     try {
       final channel = WebSocketChannel.connect(Uri.parse(wsUrl));
       _channel = channel;
+      _socketLive = false;
+
       channel.stream.listen(
         _onServerMessage,
         onDone: _resetSocket,
         onError: (_) => _resetSocket(),
+        // Without this a socket error becomes an unhandled zone error and, on
+        // some platforms, takes the isolate down with it.
+        cancelOnError: false,
       );
+
+      // `connect` is lazy, so this is the only place we learn the handshake
+      // actually succeeded.
+      channel.ready
+          .then((_) {
+            if (_disposed || _channel != channel) return;
+            _socketLive = true;
+            _reconnectAttempts = 0;
+            if (!_online) {
+              _online = true;
+              _emit();
+            }
+          })
+          .catchError((Object _) {
+            if (_channel == channel) _resetSocket();
+          });
     } catch (_) {
       _resetSocket();
     }
@@ -232,11 +338,39 @@ class SyncService {
 
   void _resetSocket() {
     _channel = null;
+    _socketLive = false;
     // The live link just dropped. Show offline immediately rather than waiting
-    // for a queued push to fail — the connectivity listener and the periodic
-    // timer will bring us back and flip the badge when the server answers again.
-    _online = false;
-    _emit();
+    // for a queued push to fail.
+    if (_online) {
+      _online = false;
+      _emit();
+    }
+    _scheduleReconnect();
+  }
+
+  /// Rebuild the socket after a drop, backing off so a server that is down does
+  /// not get hammered by every till in every venue at once.
+  ///
+  /// 2s, 4s, 8s, 16s, then every 30s. The periodic timer in [start] is the
+  /// backstop if this is ever missed; both funnel through [_connectWebSocket],
+  /// which no-ops when a channel already exists.
+  void _scheduleReconnect() {
+    if (_disposed) return;
+    _reconnectTimer?.cancel();
+
+    final seconds = _reconnectAttempts >= 4
+        ? 30
+        : 2 << _reconnectAttempts.clamp(0, 3);
+    _reconnectAttempts++;
+
+    _reconnectTimer = Timer(Duration(seconds: seconds), () {
+      if (_disposed || _channel != null) return;
+      _connectWebSocket();
+      // A reconnect is also the moment to catch up on anything queued while the
+      // link was down, and on catalogue changes pushed to terminals that were
+      // connected at the time and missed by this one.
+      unawaited(resync());
+    });
   }
 
   Future<void> _onServerMessage(dynamic raw) async {
@@ -245,9 +379,17 @@ class SyncService {
     switch (type) {
       case 'catalogue.updated':
         await pullCatalogue();
+        // Departments ride on the catalogue event: the back office broadcasts
+        // it for both, and a category picture changing without the rail
+        // updating is exactly the "why is it not syncing" complaint.
+        await pullDepartments();
       case 'programming.updated':
         // Deals, tax and finalise keys all live here.
         await pullDeals();
+      case 'denominations.changed':
+        // A note picture or value edited in the back office reaches the counter
+        // without anyone restarting the till.
+        await pullDenominations();
     }
     // Re-broadcast the event so providers that aren't DB-backed (the floor
     // plan, chiefly) can refresh themselves when the back office changes.
@@ -259,6 +401,137 @@ class SyncService {
   /// subscribe.
   final _events = StreamController<String>.broadcast();
   Stream<String> get events => _events.stream;
+
+  /// Refresh the category buttons — picture, emoji and colour per department.
+  ///
+  /// Failures are swallowed on purpose. This is decoration on a rail whose
+  /// contents come from the products themselves, so a department pull that 404s
+  /// against an older server, or times out, must leave the till selling exactly
+  /// as it did before.
+  Future<void> pullDepartments() async {
+    try {
+      final res = await http
+          .get(
+            Uri.parse(
+              '$apiBase/till/departments?office=${Uri.encodeComponent(office)}',
+            ),
+          )
+          .timeout(const Duration(seconds: 8));
+      if (res.statusCode != 200) return;
+
+      final items = (jsonDecode(res.body) as List<dynamic>)
+          .cast<Map<String, dynamic>>();
+      final names = <String>{};
+
+      await _db.batch((b) {
+        for (final raw in items) {
+          final name = (raw['department_name'] as String?)?.trim() ?? '';
+          if (name.isEmpty) continue;
+          names.add(name);
+          b.insert(
+            _db.departments,
+            DepartmentsCompanion.insert(
+              name: name,
+              emoji: Value(raw['emoji'] as String?),
+              imageUrl: Value(raw['image_url'] as String?),
+              buttonColor: Value(raw['button_color'] as String?),
+              sortOrder: Value((raw['sort_order'] as num? ?? 0).toInt()),
+            ),
+            onConflict: DoUpdate((_) => DepartmentsCompanion(
+                  emoji: Value(raw['emoji'] as String?),
+                  imageUrl: Value(raw['image_url'] as String?),
+                  buttonColor: Value(raw['button_color'] as String?),
+                  sortOrder: Value((raw['sort_order'] as num? ?? 0).toInt()),
+                )),
+          );
+        }
+      });
+
+      // A department deleted in the back office must lose its picture here too,
+      // rather than leaving an orphan row decorating a category that is gone.
+      if (names.isNotEmpty) {
+        await (_db.delete(_db.departments)
+              ..where((d) => d.name.isNotIn(names)))
+            .go();
+      }
+    } catch (_) {
+      // Offline, or an older server without the endpoint: keep what we have.
+    }
+  }
+
+  /// Refresh the cash note keys from the back office.
+  ///
+  /// Like [pullDepartments], failures are swallowed: an office that has never
+  /// touched its denominations is served the platform defaults by the server,
+  /// and a till that cannot reach the server keeps the set it already cached.
+  /// Cash has to keep working when nothing else does.
+  Future<void> pullDenominations() async {
+    try {
+      final res = await http
+          .get(
+            Uri.parse(
+              '$apiBase/till/denominations'
+              '?office=${Uri.encodeComponent(office)}',
+            ),
+          )
+          .timeout(const Duration(seconds: 8));
+      if (res.statusCode != 200) return;
+
+      final items = (jsonDecode(res.body) as List<dynamic>)
+          .cast<Map<String, dynamic>>();
+      if (items.isEmpty) return;
+
+      final values = <int>{};
+      await _db.batch((b) {
+        for (final raw in items) {
+          final value = (raw['value_minor'] as num?)?.toInt() ?? 0;
+          if (value <= 0) continue;
+          values.add(value);
+
+          // The server stores site-relative paths ("/assets/notes/gbp-20.jpg").
+          // Resolved here rather than in the widget so the image layer never
+          // has to know where the server is — and so a cached row stays valid
+          // if the till is later pointed at a different host.
+          final path = (raw['image_url'] as String?)?.trim();
+          final url = (path == null || path.isEmpty)
+              ? null
+              : (path.startsWith('http') ? path : '$apiBase$path');
+
+          final label = (raw['label'] as String?)?.trim();
+          b.insert(
+            _db.cashDenominations,
+            CashDenominationsCompanion.insert(
+              valueMinor: Value(value),
+              label: (label == null || label.isEmpty)
+                  ? '£${(value / 100).toStringAsFixed(value % 100 == 0 ? 0 : 2)}'
+                  : label,
+              imageUrl: Value(url),
+              sortOrder: Value((raw['sort_order'] as num? ?? 0).toInt()),
+            ),
+            onConflict: DoUpdate((_) => CashDenominationsCompanion(
+                  label: Value(
+                    (label == null || label.isEmpty)
+                        ? '£${(value / 100).toStringAsFixed(value % 100 == 0 ? 0 : 2)}'
+                        : label,
+                  ),
+                  imageUrl: Value(url),
+                  sortOrder: Value((raw['sort_order'] as num? ?? 0).toInt()),
+                )),
+          );
+        }
+      });
+
+      // A key removed in the back office has to disappear from the counter too,
+      // or the clerk keeps tapping a note the venue no longer accepts.
+      if (values.isNotEmpty) {
+        await (_db.delete(_db.cashDenominations)
+              ..where((d) => d.valueMinor.isNotIn(values)))
+            .go();
+      }
+    } catch (_) {
+      // Offline, or an older server without the endpoint: keep what we have.
+    }
+  }
 
   /// Refresh the local product cache. Runs on startup and whenever the back
   /// office signals a change, so the till always has a sellable catalogue even
@@ -351,9 +624,14 @@ class SyncService {
   }
 
   void dispose() {
+    // Set first: a reconnect timer or a late `ready` callback firing after this
+    // point would otherwise rebuild the socket and emit on a closed controller.
+    _disposed = true;
     _retryTimer?.cancel();
+    _reconnectTimer?.cancel();
     _connectivitySub?.cancel();
     _channel?.sink.close();
+    _channel = null;
     _status.close();
     _events.close();
   }

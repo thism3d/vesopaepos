@@ -1,8 +1,10 @@
 import 'dart:io';
 
+import 'package:drift/drift.dart' show OrderingTerm, OrderingMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'config/constants.dart';
 import 'data/auth_service.dart';
@@ -14,14 +16,18 @@ import 'data/loyalty_repository.dart';
 import 'data/session_controller.dart';
 import 'data/order_repository.dart';
 import 'data/session_repository.dart';
+import 'data/staff_repository.dart';
+import 'data/staff_session.dart';
 import 'data/sync_service.dart';
 import 'data/table_repository.dart';
+import 'data/till_settings.dart';
 import 'payments/connect_pac.dart';
 import 'payments/connect_ws.dart';
 import 'payments/dojo_config.dart';
 import 'payments/dojo_desktop.dart';
 import 'payments/dojo_native.dart';
 import 'payments/payment_provider.dart';
+import 'ui/idle_screen.dart';
 import 'ui/shell.dart';
 import 'ui/sign_in_page.dart';
 import 'ui/splash_page.dart';
@@ -258,6 +264,24 @@ final brandingRepositoryProvider = Provider<BrandingRepository>(
 /// Exposed as the plain [Branding] rather than an AsyncValue: printing must
 /// never block on this, so a till that has not loaded it yet prints with
 /// defaults instead of waiting or failing.
+/// The cash note keys, straight from the local cache so the payment screen
+/// renders with no network at all. Synced by [SyncService.pullDenominations].
+///
+/// Sorted by the order the back office chose, then by value descending, so an
+/// office that never set an order still gets the biggest note first.
+final cashDenominationsProvider = StreamProvider<List<CashDenomination>>((ref) {
+  final db = ref.watch(databaseProvider);
+  return (db.select(db.cashDenominations)
+        ..orderBy([
+          (d) => OrderingTerm(expression: d.sortOrder),
+          (d) => OrderingTerm(
+                expression: d.valueMinor,
+                mode: OrderingMode.desc,
+              ),
+        ]))
+      .watch();
+});
+
 /// Reads whatever branding has already been fetched.
 ///
 /// Deliberately pure: it starts no network work of its own, so reading it on
@@ -286,6 +310,181 @@ final brandingRefreshProvider = FutureProvider<Branding>((ref) async {
   ref.invalidate(brandingProvider);
   return branding;
 });
+
+// ---- Idle screen & staff sign-on ------------------------------------------
+
+/// How this venue's terminals behave between sales, owned by the back office.
+final tillSettingsRepositoryProvider = Provider<TillSettingsRepository>(
+  (ref) => TillSettingsRepository(
+    apiBase: ref.watch(apiBaseProvider),
+    office: ref.watch(officeProvider),
+  ),
+);
+
+/// The settings the idle screen is drawn from.
+///
+/// Pure, like [brandingProvider]: raising the idle screen must never wait on the
+/// network, so this reads whatever was last cached and [tillSettingsRefreshProvider]
+/// does the fetching.
+final tillSettingsProvider = Provider<TillSettings>(
+  (ref) =>
+      ref.watch(tillSettingsRepositoryProvider).cached ?? TillSettings.defaults,
+);
+
+/// Keeps the till settings current, and hands the sign-off timer its numbers.
+///
+/// The `configure` call is the link between the back office and the timer: a
+/// manager changing three minutes to five, or switching the PIN off, reaches
+/// every terminal without anyone restarting one.
+final tillSettingsRefreshProvider = FutureProvider<TillSettings>((ref) async {
+  final office = ref.watch(officeProvider);
+  if (office.isEmpty) return TillSettings.defaults;
+
+  ref.listen(syncEventsProvider, (_, next) {
+    if (next.value == 'till-settings') ref.invalidateSelf();
+  });
+
+  final settings = await ref.watch(tillSettingsRepositoryProvider).load();
+  ref.invalidate(tillSettingsProvider);
+
+  ref.read(staffSessionProvider.notifier).configure(
+        signoffSeconds: settings.signoffSeconds,
+        requirePin: settings.idleRequirePin,
+      );
+
+  return settings;
+});
+
+/// The staff list, and the PIN check that reads it.
+final staffRepositoryProvider = Provider<StaffRepository>(
+  (ref) => StaffRepository(
+    apiBase: ref.watch(apiBaseProvider),
+    db: ref.watch(databaseProvider),
+    terminalToken: ref.watch(sessionProvider).terminalToken,
+  ),
+);
+
+/// Who may sign on, straight from the local cache so the PIN pad renders and
+/// answers with no network at all.
+final staffListProvider = StreamProvider<List<StaffData>>((ref) {
+  final db = ref.watch(databaseProvider);
+  return (db.select(db.staff)
+        ..orderBy([(s) => OrderingTerm(expression: s.pluid)]))
+      .watch();
+});
+
+/// Whether this terminal can actually check a PIN.
+///
+/// False when nobody is cached — either the till was commissioned before the
+/// terminal token existed and cannot read the list, or the venue has not added
+/// anyone yet. Both cases mean the idle screen must not demand a PIN: a lock with
+/// no key is a till that cannot trade, which is a worse fault than an unlocked
+/// screen. Everything that raises the lock consults this first.
+final canSignOnProvider = Provider<bool>((ref) {
+  final staff = ref.watch(staffListProvider).value;
+  return staff != null && staff.isNotEmpty;
+});
+
+/// Pulls the staff list in the background, and again whenever the back office
+/// changes it.
+///
+/// Failures are deliberately swallowed: the cached list is what signs people on,
+/// so a terminal that cannot reach the server carries on working with the staff
+/// it already knows about. The PIN pad is what tells the clerk when there is
+/// genuinely nobody to sign on as.
+final staffSyncProvider = FutureProvider<void>((ref) async {
+  final session = ref.watch(sessionProvider);
+  if (session.office?.isEmpty ?? true) return;
+
+  // A change made in the back office reaches an *already running* till this way,
+  // within a second. The socket only serves terminals that are connected at the
+  // time, which is why it is a supplement to SyncService.resync rather than the
+  // only route.
+  ref.listen(syncEventsProvider, (_, next) {
+    if (next.value == 'staff.updated') ref.invalidateSelf();
+  });
+
+  // The network coming back is the other moment a stale list gets corrected.
+  // Without this, a till switched on before the broadband was up kept whatever
+  // it had until something else happened to refresh it.
+  ref.listen(syncStatusProvider, (previous, next) {
+    final was = previous?.value?.online ?? false;
+    final now = next.value?.online ?? false;
+    if (!was && now) ref.invalidateSelf();
+  });
+
+  try {
+    await ref.watch(staffRepositoryProvider).sync();
+  } on StaffSyncFailed {
+    // Keep whatever is cached.
+  }
+});
+
+/// Refresh the staff list before the till is handed over, not after.
+///
+/// Bounded, and deliberately so. Waiting on the network before a till will open
+/// is exactly the kind of thing that turns a broadband fault into a venue that
+/// cannot trade, so this gives the pull a few seconds and then gets out of the
+/// way — the cached list is perfectly good, and [SyncService.resync] will correct
+/// it the moment the connection returns.
+///
+/// The wait is free in practice: the splash animation is already running.
+Future<void> refreshStaffBeforeOpening(WidgetRef ref) async {
+  try {
+    await ref
+        .read(staffSyncProvider.future)
+        .timeout(const Duration(seconds: 4));
+  } catch (_) {
+    // Offline, slow, or refused. Open the till anyway.
+  }
+}
+
+/// Whose name goes on this sale.
+///
+/// The signed-on member of staff, falling back to the account the terminal was
+/// commissioned with. The fallback is what keeps a venue that does not use staff
+/// sign-on printing exactly the "Served by" it always has — the feature is
+/// additive, and switching it off must not blank a receipt line.
+final servedByProvider = Provider<String?>((ref) {
+  final staff = ref.watch(staffSessionProvider).name;
+  if (staff != null && staff.isNotEmpty) return staff;
+  return ref.watch(sessionProvider).name;
+});
+
+/// The staff row id for the person on shift, for reports to group by. Null when
+/// nobody is signed on — a name can be edited or repeated, an id cannot.
+final servedByIdProvider = Provider<int?>(
+  (ref) => ref.watch(staffSessionProvider).staff?.id,
+);
+
+/// A background image chosen on *this* terminal, overriding the back office's.
+///
+/// Per-terminal because it is a per-terminal decision — a venue with a screen in
+/// the window and one behind the bar may not want the same picture on both. Held
+/// as a path rather than a copy of the file: the operator picked a file, and if
+/// they move or replace it the till should follow, not keep a stale duplicate.
+class IdleImageOverride extends AsyncNotifier<String?> {
+  static const _key = 'idle_image_path';
+
+  @override
+  Future<String?> build() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_key);
+  }
+
+  Future<void> set(String? path) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (path == null || path.isEmpty) {
+      await prefs.remove(_key);
+    } else {
+      await prefs.setString(_key, path);
+    }
+    state = AsyncData(path);
+  }
+}
+
+final idleImageOverrideProvider =
+    AsyncNotifierProvider<IdleImageOverride, String?>(IdleImageOverride.new);
 
 /// Vouchers, gift cards, deposits, loyalty and promotions.
 final commerceRepositoryProvider = Provider<CommerceRepository>(
@@ -333,6 +532,13 @@ final syncServiceProvider = Provider<SyncService>((ref) {
     wsUrl: ref.watch(wsUrlProvider),
     office: ref.watch(officeProvider),
   );
+
+  // Staff rides on the same catch-up as the catalogue: startup, every reconnect,
+  // and the 30-second backstop. Read lazily inside the callback rather than
+  // captured now, so a terminal that signs in later picks up its token without
+  // this service being rebuilt.
+  sync.pullStaff = () => ref.read(staffRepositoryProvider).sync();
+
   ref.onDispose(sync.dispose);
   return sync;
 });
@@ -345,7 +551,40 @@ final syncStatusProvider = StreamProvider<SyncStatus>((ref) {
   return sync.status;
 });
 
-void main() {
+/// Desktop tills run as a kiosk: full screen, and with no way to close or
+/// minimise the window from the title bar.
+///
+/// A till that can be minimised is a till that can be minimised *by a customer
+/// leaning over the counter*, and a closed till stops taking money until
+/// someone finds the shortcut to reopen it. Staff still get out through Sign
+/// out, which is the route that ends a session properly.
+///
+/// Mobile is untouched — Android and iOS have no window chrome to hide, and
+/// window_manager does not support them.
+Future<void> _lockWindowToKiosk() async {
+  if (!(Platform.isWindows || Platform.isMacOS || Platform.isLinux)) return;
+
+  await windowManager.ensureInitialized();
+  await windowManager.waitUntilReadyToShow(
+    const WindowOptions(
+      // `hidden` drops the whole bar on macOS. On Windows the buttons are
+      // disabled individually below, which keeps the window draggable.
+      titleBarStyle: TitleBarStyle.hidden,
+      fullScreen: true,
+    ),
+    () async {
+      await windowManager.setClosable(false);
+      await windowManager.setMinimizable(false);
+      await windowManager.setFullScreen(true);
+      await windowManager.show();
+      await windowManager.focus();
+    },
+  );
+}
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await _lockWindowToKiosk();
   runApp(const ProviderScope(child: VesopaEposApp()));
 }
 
@@ -359,12 +598,40 @@ class VesopaEposApp extends ConsumerStatefulWidget {
 class _VesopaEposAppState extends ConsumerState<VesopaEposApp> {
   bool _splashDone = false;
 
+  /// So the recovery below runs once, not on every rebuild.
+  bool _recommissioning = false;
+
+  /// A terminal whose stored session predates the terminal token cannot read its
+  /// staff list, so staff sign-on can never work on it. Rather than explain that
+  /// on a screen the operator then has to act on, the till clears the session and
+  /// shows the sign-in page: signing in is the fix, so ask for the sign-in.
+  ///
+  /// Only the session is cleared. The local database — the outbox of sales not yet
+  /// pushed, parked bills, the cached catalogue — is deliberately left alone: the
+  /// outbox is the only copy of that money, and wiping it to tidy up a token
+  /// would destroy takings. Signing back into the same office picks all of it up
+  /// and flushes the outbox on the next sync.
+  void _recommissionIfNeeded(Session session) {
+    if (_recommissioning) return;
+    if (!session.signedIn || session.commissioned) return;
+
+    _recommissioning = true;
+    // After the frame: this is called from build, and signOut moves provider
+    // state.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await ref.read(sessionControllerProvider.notifier).signOut();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     // Dark until the stored preference loads, so the app never flashes white
     // on startup before settling into the operator's actual choice.
     final mode = ref.watch(themeControllerProvider).value ?? ThemeMode.dark;
     final session = ref.watch(sessionControllerProvider);
+
+    final current = session.value;
+    if (current != null) _recommissionIfNeeded(current);
 
     return MaterialApp(
       title: 'VesopaEPOS',
@@ -373,16 +640,90 @@ class _VesopaEposAppState extends ConsumerState<VesopaEposApp> {
       darkTheme: buildPosTheme(Brightness.dark),
       themeMode: mode,
       home: !_splashDone
-          ? SplashPage(onDone: () => setState(() => _splashDone = true))
+          // The splash is held until the staff list has had its chance to
+          // refresh, so the till opens on current names and PINs rather than on
+          // whatever it had when it was last switched off. Bounded, so a till
+          // with no network still opens — see refreshStaffBeforeOpening.
+          ? SplashPage(
+              onDone: () async {
+                await refreshStaffBeforeOpening(ref);
+                if (mounted) setState(() => _splashDone = true);
+              },
+            )
           : switch (session) {
               // Not commissioned yet, or signed out: ask who this is. The till
               // cannot sell before it knows which venue's catalogue to load.
               AsyncData(value: final s) when !s.signedIn => const SignInPage(),
-              AsyncData() => const PosShell(),
+              // Holds a session but no terminal token: _recommissionIfNeeded is
+              // clearing it, so show the sign-in it is about to land on rather
+              // than a flash of the till.
+              AsyncData(value: final s) when !s.commissioned =>
+                const SignInPage(),
+              AsyncData() => const _LockedTill(child: PosShell()),
               _ => const Scaffold(
                 body: Center(child: CircularProgressIndicator()),
               ),
             },
+    );
+  }
+}
+
+/// The till, with the idle screen over the top of it when it is up.
+///
+/// Wrapping the shell rather than living inside it, for two reasons:
+///
+///  * The idle screen has to cover *everything*, dialogs and sheets included. A
+///    lock that a half-open payment dialog painted over would not be a lock.
+///  * The shell keeps its state while the screen is up. Whoever signs back on
+///    returns to the same bill, the same category, the same scroll position —
+///    the till was covered, not restarted.
+class _LockedTill extends ConsumerWidget {
+  const _LockedTill({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Start the background pulls that feed this. Watched here rather than in the
+    // shell so the settings are loaded and the timer configured before the first
+    // sale can complete.
+    ref.watch(tillSettingsRefreshProvider);
+    ref.watch(staffSyncProvider);
+
+    final settings = ref.watch(tillSettingsProvider);
+    final staffSession = ref.watch(staffSessionProvider);
+
+    // A venue with the idle screen switched off never sees any of this, and the
+    // pointer listener below costs it nothing.
+    //
+    // The second clause is what covers a till that has just been switched on:
+    // nobody has signed on yet, so a venue that wants a PIN gets the idle screen
+    // rather than an open till. Where the venue does *not* want a PIN there is
+    // nothing to unlock with, so the till simply opens.
+    //
+    // canSignOn is the guard against locking a terminal shut. A till with no
+    // staff cached — commissioned before the terminal token existed, or at a
+    // venue that has not added anyone — cannot answer a PIN, so it is never held
+    // behind one at startup. The screensaver still appears after a sale, and the
+    // pad it opens carries its own way out.
+    final canSignOn = ref.watch(canSignOnProvider);
+    final showIdle = settings.idleEnabled &&
+        (staffSession.idle ||
+            (settings.idleRequirePin && canSignOn && !staffSession.signedOn));
+
+    return Listener(
+      // Any pointer down anywhere is activity. `behavior: deferToChild` would
+      // miss taps that the child handles, which is most of them — this has to see
+      // the event on the way past, not compete for it.
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) => ref.read(staffSessionProvider.notifier).touch(),
+      onPointerSignal: (_) => ref.read(staffSessionProvider.notifier).touch(),
+      child: Stack(
+        children: [
+          child,
+          if (showIdle) IdleScreen(settings: settings),
+        ],
+      ),
     );
   }
 }

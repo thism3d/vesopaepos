@@ -10,6 +10,7 @@ class TenderEntry {
     this.entryMode,
     this.cashbackMinor = 0,
     this.gratuityMinor = 0,
+    this.cashBreakdown,
   });
 
   final TenderKind kind;
@@ -33,6 +34,11 @@ class TenderEntry {
 
   /// Gratuity the customer added — on the till, or at the reader.
   final int gratuityMinor;
+
+  /// The notes counted in on the cash keys, encoded by [CashTally.encode]
+  /// (`2000x2,500x1`). Null when the clerk simply keyed an amount, and for
+  /// every non-cash tender.
+  final String? cashBreakdown;
 
   /// What the card was actually charged: the amount against the bill plus
   /// anything the customer added at the machine.

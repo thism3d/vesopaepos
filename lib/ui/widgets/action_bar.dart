@@ -171,6 +171,12 @@ class _PrimaryButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final enabled = onTap != null;
 
+    // The brand lime is a light colour: white on it is unreadable, so the
+    // primary key carries dark ink. Disabled dims the lime towards the bar
+    // rather than fading the whole button out, so it still reads as the PAY
+    // key on a dark strip.
+    final ink = enabled ? Pos.onBrand : Pos.onBrand.withValues(alpha: 0.45);
+
     return Material(
       // Dimmed when there is nothing to pay for, so an empty sale cannot be
       // tendered.
@@ -183,12 +189,12 @@ class _PrimaryButton extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(icon, color: Colors.white, size: 22),
+                Icon(icon, color: ink, size: 22),
                 const SizedBox(width: 10),
                 Text(
                   label,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: ink,
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
                     letterSpacing: 0.5,

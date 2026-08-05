@@ -4,8 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/floor_repository.dart';
 import '../data/local/database.dart';
 import '../main.dart';
+import 'payment_page.dart';
 import 'placeholder_page.dart';
 import 'theme.dart';
+import 'widgets/pos_message.dart';
 import 'widgets/basket_panel.dart' show money;
 
 final parkedOrdersProvider = StreamProvider<List<Order>>(
@@ -130,16 +132,12 @@ class TablesPage extends ConsumerWidget {
           .first;
       if (lines.isEmpty) {
         if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Ring up some items first.')),
-        );
+        PosMessenger.error(context, 'Ring up some items first.');
         return;
       }
       await tables.park(currentOrderId, number);
       if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Saved to table $number.')));
+      PosMessenger.success(context, 'Saved to table $number.');
       return;
     }
 
@@ -190,9 +188,7 @@ class TablesPage extends ConsumerWidget {
           await tables.transfer(order.id, to);
         } on StateError catch (e) {
           if (!context.mounted) return;
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(e.message)));
+          PosMessenger.error(context, e.message);
         }
       case 'split':
         if (!context.mounted) return;
@@ -200,6 +196,13 @@ class TablesPage extends ConsumerWidget {
     }
   }
 
+  /// Split this table's bill evenly and go straight to taking the money.
+  ///
+  /// The bill itself is left completely alone — one check, one set of items,
+  /// one audit trail. What is divided is the *payment*: the tender screen opens
+  /// with N shares, takes each person's money in turn, and only settles the
+  /// order once every share is covered. The previous version tried to carve the
+  /// check itself into N new orders and destroyed it doing so.
   Future<void> _splitDialog(
     BuildContext context,
     WidgetRef ref,
@@ -208,20 +211,26 @@ class TablesPage extends ConsumerWidget {
     final ways = await _askNumber(context, 'Split evenly how many ways?');
     if (ways == null || !context.mounted) return;
 
-    try {
-      final ids = await ref
-          .read(tableRepositoryProvider)
-          .splitEvenly(order.id, ways);
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Split into ${ids.length} bills.')),
-      );
-    } on ArgumentError catch (e) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('${e.message}')));
+    if (ways < 2) {
+      PosMessenger.error(context, 'Need at least two ways to split.');
+      return;
     }
+
+    // Recall first: the bill has to be the live one on the till so that
+    // settling it — and the receipt that follows — lands on the right order.
+    await ref.read(tableRepositoryProvider).recall(order.id);
+    onRecall(order.id);
+
+    if (!context.mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PaymentPage(
+          orderId: order.id,
+          initialSplitWays: ways,
+          onSettled: () {},
+        ),
+      ),
+    );
   }
 
   Future<int?> _askNumber(BuildContext context, String title) {
@@ -344,10 +353,19 @@ class _TableShape extends StatelessWidget {
         ? BorderRadius.circular(400)
         : BorderRadius.circular(8);
 
+    // The tile colour first, then every piece of text on it derived from that
+    // colour. Doing it the other way round is how the total ended up hardcoded
+    // to white on the brand lime, at 1.7:1 — the number was there, but a clerk
+    // glancing at the floor plan could not read it.
+    final surface = occupied ? Pos.brand : Theme.of(context).posIdle;
+    final ink = occupied
+        ? Pos.inkOn(surface)
+        : Theme.of(context).colorScheme.onSurface;
+
     return Material(
       // An idle table used a fixed light-grey even in dark mode, so its
       // near-white number was invisible on it. Both now come from the theme.
-      color: occupied ? Pos.brand : Theme.of(context).posIdle,
+      color: surface,
       borderRadius: radius,
       child: InkWell(
         borderRadius: radius,
@@ -363,15 +381,13 @@ class _TableShape extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
-                  color: occupied
-                      ? Colors.white
-                      : Theme.of(context).colorScheme.onSurface,
+                  color: ink,
                 ),
               ),
               if (occupied)
                 Text(
                   money(order!.totalMinor),
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                  style: TextStyle(color: Pos.mutedInkOn(surface), fontSize: 13),
                 )
               else
                 Text(

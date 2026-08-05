@@ -15,6 +15,8 @@ class PricedLine {
     this.discountMinor = 0,
     this.promotionName,
     this.promotionId,
+    this.addedBy,
+    this.addedAt,
   });
 
   final String id;
@@ -31,6 +33,12 @@ class PricedLine {
   final int discountMinor;
   final String? promotionName;
   final int? promotionId;
+
+  /// Who put this item on the bill, and when. Carried through pricing untouched
+  /// so the check view can group a parked table's items by the person who served
+  /// them. Null on a venue that does not use staff sign-on.
+  final String? addedBy;
+  final DateTime? addedAt;
 
   /// Before any offer.
   int get grossMinor => (unitPriceMinor * quantity).round();
@@ -58,6 +66,8 @@ class PricedLine {
         discountMinor: discountMinor,
         promotionName: promotionName,
         promotionId: promotionId,
+        addedBy: addedBy,
+        addedAt: addedAt,
       );
 }
 
@@ -68,6 +78,7 @@ class BasketTotals {
     required this.grossMinor,
     required this.promoMinor,
     required this.manualDiscountMinor,
+    this.customerDiscountMinor = 0,
     required this.voucherMinor,
     required this.pointsMinor,
     required this.gratuityMinor,
@@ -88,6 +99,12 @@ class BasketTotals {
   /// Taken off by the clerk.
   final int manualDiscountMinor;
 
+  /// The attached customer's standing entitlement — a staff rate, a member's
+  /// 10%. Held apart from [manualDiscountMinor] so the receipt can say *why*
+  /// the bill is lower; a clerk who cannot see the loyalty discount land
+  /// reasonably concludes it is broken.
+  final int customerDiscountMinor;
+
   final int voucherMinor;
   final int pointsMinor;
   final int gratuityMinor;
@@ -103,11 +120,16 @@ class BasketTotals {
 
   /// Everything taken off, for the "you saved" line.
   int get savedMinor =>
-      promoMinor + manualDiscountMinor + voucherMinor + pointsMinor;
+      promoMinor +
+      manualDiscountMinor +
+      customerDiscountMinor +
+      voucherMinor +
+      pointsMinor;
 
   /// Goods after discounts but before service — what gratuity is charged on,
   /// and what loyalty points are earned on.
-  int get netGoodsMinor => grossMinor - promoMinor - manualDiscountMinor;
+  int get netGoodsMinor =>
+      grossMinor - promoMinor - manualDiscountMinor - customerDiscountMinor;
 
   static const empty = BasketTotals(
     lines: [],
@@ -155,6 +177,7 @@ class PricingEngine {
   BasketTotals price(
     List<PricedLine> rawLines, {
     int manualDiscountMinor = 0,
+    int customerDiscountMinor = 0,
     int voucherMinor = 0,
     int pointsMinor = 0,
     int gratuityBp = 0,
@@ -232,6 +255,11 @@ class PricingEngine {
     var remaining = gross - promoTotal;
     final manual = manualDiscountMinor.clamp(0, remaining);
     remaining -= manual;
+    // The customer's standing discount sits with the manual one: both are
+    // reductions on the goods, before vouchers and points are spent against
+    // what is left.
+    final customer = customerDiscountMinor.clamp(0, remaining);
+    remaining -= customer;
     final voucher = voucherMinor.clamp(0, remaining);
     remaining -= voucher;
     final points = pointsMinor.clamp(0, remaining);
@@ -253,7 +281,9 @@ class PricingEngine {
       // This line's share of the reductions that came after promotions.
       final share = discountable <= 0
           ? 0
-          : ((manual + voucher + points) * line.netMinor / discountable).round();
+          : ((manual + customer + voucher + points) * line.netMinor /
+                  discountable)
+              .round();
       final taxable = line.netMinor - share;
       if (taxable <= 0) continue;
       tax += (taxable - taxable / (1 + line.taxPercentage / 100)).round();
@@ -264,6 +294,7 @@ class PricingEngine {
       grossMinor: gross,
       promoMinor: promoTotal,
       manualDiscountMinor: manual,
+      customerDiscountMinor: customer,
       voucherMinor: voucher,
       pointsMinor: points,
       gratuityMinor: gratuity,

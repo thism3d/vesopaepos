@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 
 import '../data/local/database.dart';
 import '../data/session_repository.dart';
+import '../data/cash_tally.dart';
 
 String _money(int minor) =>
     NumberFormat.currency(locale: 'en_GB', symbol: '£').format(minor / 100);
@@ -91,6 +92,13 @@ class ReceiptBuilder {
           ),
         ]),
       );
+      // Notes belong to the item they were taken against, printed directly
+      // under it. The thermal receipt was dropping them entirely — the PDF
+      // receipt has always shown them, so the same sale printed two ways said
+      // two different things.
+      if (line.notes != null && line.notes!.isNotEmpty) {
+        bytes.addAll(_generator.text('   * ${line.notes}'));
+      }
     }
 
     bytes.addAll(_generator.hr());
@@ -121,6 +129,12 @@ class ReceiptBuilder {
     bytes.addAll(_generator.hr());
     for (final p in payments) {
       bytes.addAll(_row(p.method.toUpperCase(), _money(p.amountMinor)));
+      // The notes actually handed over, when they were counted in on the cash
+      // keys — so the customer can check the receipt against their wallet.
+      final tally = CashTally.decode(p.cashBreakdown);
+      if (tally.isNotEmpty) {
+        bytes.addAll(_generator.text('   ${tally.describe()}'));
+      }
     }
 
     // Change is only meaningful for cash, and only when they overpaid.

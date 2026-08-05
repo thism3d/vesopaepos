@@ -9,14 +9,23 @@ import 'theme.dart';
 import 'widgets/basket_panel.dart' show money;
 
 /// Pick a table to save the current sale onto, from the actual floor plan
-/// rather than a blind number entry. Free tables are tappable; a table that
-/// already has a bill on it is shown as booked and cannot be chosen — this is
-/// the picker a waiter reaches for at the pass, so what's free has to be
-/// readable at a glance.
+/// rather than a blind number entry. This is the picker a waiter reaches for at
+/// the pass, so what's free has to be readable at a glance.
 ///
-/// Returns the chosen table number, or null if cancelled. Falls back to a
-/// plain number entry when no floor plan has been drawn, so a venue that never
-/// laid out its rooms can still save to a table.
+/// A booked table is no longer a dead end: tapping one returns its number just
+/// like a free one, and the caller adds to the bill already sitting there. A
+/// table that ordered a round at 8pm and another green tea at 8:20 is one bill,
+/// not two, and the clerk should not have to remember to recall it from the
+/// tables screen first.
+///
+/// Whether the table is occupied is deliberately *not* returned — the caller
+/// re-reads it from the database. The picker's view comes from a stream that
+/// can be a frame stale, and on a floor with several terminals the answer must
+/// come from the same place the merge is about to act on.
+///
+/// Returns the chosen table number, or null if cancelled. Falls back to a plain
+/// number entry when no floor plan has been drawn, so a venue that never laid
+/// out its rooms can still save to a table.
 Future<int?> showTablePicker(BuildContext context, WidgetRef ref) {
   return showDialog<int>(
     context: context,
@@ -126,7 +135,8 @@ class _Legend extends StatelessWidget {
         children: [
           _swatch(Theme.of(context).posIdle, 'Free', context),
           const SizedBox(width: 20),
-          _swatch(Pos.brand, 'Booked', context),
+          // Says what a tap will do, now that booked tables accept one.
+          _swatch(Pos.brand, 'Booked — tap to add to the bill', context),
         ],
       ),
     );
@@ -317,20 +327,25 @@ class _PickableTable extends StatelessWidget {
         ? table.label!
         : '${table.number}';
 
+    // Same rule as the floor plan in tables_page.dart: surface first, ink
+    // derived from it. The two screens draw the same tile and had drifted into
+    // disagreeing about what colour the total should be.
+    final surface = booked ? Pos.brand : Theme.of(context).posIdle;
+    final ink = booked
+        ? Pos.inkOn(surface)
+        : Theme.of(context).colorScheme.onSurface;
+
     return Opacity(
       opacity: booked ? 0.75 : 1,
       child: Material(
-        color: booked ? Pos.brand : Theme.of(context).posIdle,
+        color: surface,
         borderRadius: radius,
         child: InkWell(
           borderRadius: radius,
-          onTap: booked
-              ? () => ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Table $label already has a bill on it.'),
-                  ),
-                )
-              : onPick,
+          // Booked tables are pickable too — the caller adds to the bill that
+          // is already there rather than starting a second one on the same
+          // table.
+          onTap: onPick,
           child: Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -340,15 +355,13 @@ class _PickableTable extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
-                    color: booked
-                        ? Colors.white
-                        : Theme.of(context).colorScheme.onSurface,
+                    color: ink,
                   ),
                 ),
                 if (booked)
                   Text(
                     money(order!.totalMinor),
-                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    style: TextStyle(color: Pos.mutedInkOn(surface), fontSize: 13),
                   )
                 else
                   Text(

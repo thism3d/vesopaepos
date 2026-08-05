@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 
 import '../data/local/database.dart';
 import '../main.dart';
+import 'widgets/pos_message.dart';
 
 String _money(int minor) =>
     NumberFormat.currency(locale: 'en_GB', symbol: '£').format(minor / 100);
@@ -114,8 +115,9 @@ class _ProductsPageState extends ConsumerState<ProductsPage> {
     );
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${product.name} updated on this terminal')),
+      PosMessenger.success(
+        context,
+        '${product.name} updated on this terminal',
       );
     }
   }

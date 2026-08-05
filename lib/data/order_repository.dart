@@ -30,7 +30,20 @@ class OrderRepository {
   /// Ring an item. Tapping the same product again bumps the quantity of the
   /// existing line rather than adding a second one, which is what the receipt
   /// is expected to show ("2x - £2.4").
-  Future<void> addLine(String orderId, Product product, {double qty = 1}) async {
+  ///
+  /// [addedBy] is the member of staff signed on at the time. A repeat tap that
+  /// merges into an existing line does *not* reassign it: the line belongs to
+  /// whoever first put it on the bill, and a colleague adding a second round to
+  /// somebody else's line should not take the whole line's authorship with it.
+  /// Where that matters — a table two people served — the second round lands on
+  /// its own line anyway, because the merge only fires within one visit to the
+  /// screen.
+  Future<void> addLine(
+    String orderId,
+    Product product, {
+    double qty = 1,
+    String? addedBy,
+  }) async {
     await _db.transaction(() async {
       final existing = await (_db.select(_db.orderLines)
             ..where((l) => l.orderId.equals(orderId) & l.pluId.equals(product.pluId)))
@@ -52,12 +65,83 @@ class OrderRepository {
                 // takings that have already been rung up.
                 unitPriceMinor: product.priceMinor,
                 taxPercentage: Value(product.taxPercentage),
+                // Who rang it and when. Null on a venue that does not use staff
+                // sign-on, and the check view simply shows no header for it.
+                addedBy: Value(addedBy),
+                addedAt: Value(DateTime.now()),
               ),
             );
       }
       await recalculate(orderId);
     });
   }
+
+  /// Void selected lines off an open check, leaving the rest of the sale alone.
+  ///
+  /// This is the everyday correction — a mis-rung item — as distinct from
+  /// [voidOrder], which cancels the whole check. It is audited just as tightly:
+  /// a clerk who can quietly remove one £40 line from a bill is a clerk who can
+  /// pocket £40, so the reason, the amount and *which items* are logged.
+  ///
+  /// Returns the value removed, in pence.
+  Future<int> voidLines(
+    String orderId, {
+    required Set<String> lineIds,
+    required String reason,
+  }) async {
+    if (lineIds.isEmpty) return 0;
+
+    return _db.transaction(() async {
+      final order =
+          await (_db.select(_db.orders)..where((o) => o.id.equals(orderId)))
+              .getSingle();
+      final lines = await (_db.select(_db.orderLines)
+            ..where((l) => l.orderId.equals(orderId) & l.id.isIn(lineIds)))
+          .get();
+      if (lines.isEmpty) return 0;
+
+      // Value the lines *before* deleting them — afterwards the figure is gone,
+      // which is the same reason voidOrder logs first and clears second.
+      var amount = 0;
+      for (final line in lines) {
+        amount += (line.unitPriceMinor * line.quantity).round() -
+            line.lineDiscountMinor;
+      }
+
+      // A short human summary, so the void log reads "2x Flat White" rather
+      // than a bare amount a manager cannot investigate.
+      final summary = lines
+          .map((l) => '${_qtyLabel(l.quantity)}x ${l.name}')
+          .join(', ');
+
+      await _db.into(_db.outboxEntries).insert(
+            OutboxEntriesCompanion.insert(
+              id: _uuid.v4(),
+              entity: 'void',
+              entityId: orderId,
+              payload: jsonEncode({
+                'id': _uuid.v4(),
+                'order_id': orderId,
+                'clerk_pin': order.clerkPin,
+                'reason': reason,
+                'items': summary.length > 500
+                    ? '${summary.substring(0, 497)}...'
+                    : summary,
+                'scope': 'item',
+                'amount_minor': amount,
+                'voided_at': DateTime.now().toIso8601String(),
+              }),
+            ),
+          );
+
+      await (_db.delete(_db.orderLines)..where((l) => l.id.isIn(lineIds))).go();
+      await recalculate(orderId);
+      return amount;
+    });
+  }
+
+  static String _qtyLabel(double q) =>
+      q % 1 == 0 ? q.toStringAsFixed(0) : q.toStringAsFixed(2);
 
   /// Clear the sale without taking money. Nothing is queued for the server:
   /// a voided order was never a sale.
@@ -85,6 +169,7 @@ class OrderRepository {
                   'order_id': orderId,
                   'clerk_pin': order.clerkPin,
                   'reason': reason,
+                  'scope': 'sale',
                   'amount_minor': order.totalMinor,
                   'voided_at': DateTime.now().toIso8601String(),
                 }),
@@ -239,6 +324,19 @@ class OrderRepository {
     });
   }
 
+  /// What the attached customer's standing discount comes to on [grossMinor].
+  ///
+  /// Public and static because three places need the same answer — the stored
+  /// totals, the sale screen's receipt, and the payment screen's tender maths.
+  /// When they each worked it out for themselves, two of them worked it out as
+  /// zero and the customer was charged the undiscounted bill.
+  static int customerDiscountOn(Order order, int grossMinor) =>
+      switch (order.customerDiscountType) {
+        'percent' => (grossMinor * order.customerDiscountValue / 100).round(),
+        'amount' => order.customerDiscountValue,
+        _ => 0,
+      };
+
   /// Recompute the stored totals from the lines. Totals are derived once and
   /// stored, so a reprint or an end-of-day report never disagrees with what the
   /// customer was actually charged. Public because splitting and merging bills
@@ -267,11 +365,7 @@ class OrderRepository {
     final dealSaving = (await mixMatch()).apply(lines).totalSavingMinor;
 
     // The attached customer's standing discount, on the gross.
-    final customerDiscount = switch (order.customerDiscountType) {
-      'percent' => (gross * order.customerDiscountValue / 100).round(),
-      'amount' => order.customerDiscountValue,
-      _ => 0,
-    };
+    final customerDiscount = customerDiscountOn(order, gross);
 
     // A discount can never take the bill below zero.
     final discount = (order.manualDiscountMinor +
@@ -322,11 +416,17 @@ class OrderRepository {
   /// [sessionId] is the trading period the takings fall into; it is stamped at
   /// settlement rather than at open, so a bill parked across a Z report counts
   /// in the session where it was actually paid.
+  ///
+  /// [staffId] and [staffName] are the member of staff who took the money, for
+  /// the same reason and stamped at the same moment.
   Future<void> settle(
     String orderId,
     String method,
     int amountMinor, {
     String? sessionId,
+    String? cashBreakdown,
+    int? staffId,
+    String? staffName,
   }) async {
     await _db.transaction(() async {
       await _db.into(_db.payments).insert(
@@ -335,6 +435,9 @@ class OrderRepository {
               orderId: orderId,
               method: method,
               amountMinor: amountMinor,
+              // Which notes were handed over, when the clerk counted them in
+              // on the cash keys. Null for everything else.
+              cashBreakdown: Value(cashBreakdown),
             ),
           );
 
@@ -349,6 +452,8 @@ class OrderRepository {
           status: const Value('closed'),
           closedAt: Value(DateTime.now()),
           sessionId: Value(sessionId),
+          staffId: Value(staffId),
+          staffName: Value(staffName),
         ),
       );
 
@@ -385,6 +490,11 @@ class OrderRepository {
       'customer_id': order.customerId,
       'session_id': order.sessionId,
       'closed_at': order.closedAt?.toIso8601String(),
+      // Who served it. The server has had a clerk_name column since the receipt
+      // work; the till never filled it, so every sale in the back office was
+      // attributed to nobody. staff_id is the stable key a report groups by.
+      'clerk_name': order.staffName,
+      'staff_id': order.staffId,
       'lines': [
         for (final l in lines)
           {
@@ -393,11 +503,25 @@ class OrderRepository {
             'quantity': l.quantity,
             'unit_price_minor': l.unitPriceMinor,
             'tax_percentage': l.taxPercentage,
+            // The kitchen instruction taken against this item. The server has
+            // always had a column for it; the till simply never sent it, so a
+            // receipt reprinted from the back office lost every "no ice".
+            'note': l.notes,
+            // Who put this item on the bill and when, so the back office can
+            // answer "who served this table?" per item rather than per sale.
+            'added_by': l.addedBy,
+            'added_at': l.addedAt?.toIso8601String(),
           },
       ],
       'payments': [
         for (final pay in payments)
-          {'method': pay.method, 'amount_minor': pay.amountMinor},
+          {
+            'method': pay.method,
+            'amount_minor': pay.amountMinor,
+            // Which notes were handed over, so a reprint can reproduce the
+            // same breakdown the customer was given at the counter.
+            'cash_breakdown': pay.cashBreakdown,
+          },
       ],
     });
 

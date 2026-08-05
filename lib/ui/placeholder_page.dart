@@ -44,7 +44,7 @@ class PlaceholderPage extends StatelessWidget {
                   color: Pos.brandSoft,
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: Icon(icon, size: 30, color: Pos.brand),
+                child: Icon(icon, size: 30, color: Pos.brandDeep),
               ),
               const SizedBox(height: 20),
               Text(
@@ -74,7 +74,7 @@ class PlaceholderPage extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Icon(Icons.check_circle,
-                            size: 18, color: Pos.brand),
+                            size: 18, color: Pos.brandDeep),
                         const SizedBox(width: 10),
                         Expanded(
                           child: Text(
@@ -96,7 +96,7 @@ class PlaceholderPage extends StatelessWidget {
                   ),
                   child: const Row(
                     children: [
-                      Icon(Icons.settings_ethernet, size: 18, color: Pos.brand),
+                      Icon(Icons.settings_ethernet, size: 18, color: Pos.brandDeep),
                       SizedBox(width: 10),
                       Expanded(
                         child: Text(

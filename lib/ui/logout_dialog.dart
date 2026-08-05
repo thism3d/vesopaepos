@@ -81,7 +81,7 @@ class _LogoutDialogState extends ConsumerState<LogoutDialog> {
     return AlertDialog(
       title: const Row(
         children: [
-          Icon(Icons.logout, color: Pos.brand),
+          Icon(Icons.logout, color: Pos.brandDeep),
           SizedBox(width: 12),
           Text('Sign out'),
         ],

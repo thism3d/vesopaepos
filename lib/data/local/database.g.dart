@@ -845,6 +845,28 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _staffIdMeta = const VerificationMeta(
+    'staffId',
+  );
+  @override
+  late final GeneratedColumn<int> staffId = GeneratedColumn<int>(
+    'staff_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _staffNameMeta = const VerificationMeta(
+    'staffName',
+  );
+  @override
+  late final GeneratedColumn<String> staffName = GeneratedColumn<String>(
+    'staff_name',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _sessionIdMeta = const VerificationMeta(
     'sessionId',
   );
@@ -1029,6 +1051,8 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
     status,
     tableNumber,
     clerkPin,
+    staffId,
+    staffName,
     sessionId,
     customerId,
     splitFromOrderId,
@@ -1082,6 +1106,18 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
       context.handle(
         _clerkPinMeta,
         clerkPin.isAcceptableOrUnknown(data['clerk_pin']!, _clerkPinMeta),
+      );
+    }
+    if (data.containsKey('staff_id')) {
+      context.handle(
+        _staffIdMeta,
+        staffId.isAcceptableOrUnknown(data['staff_id']!, _staffIdMeta),
+      );
+    }
+    if (data.containsKey('staff_name')) {
+      context.handle(
+        _staffNameMeta,
+        staffName.isAcceptableOrUnknown(data['staff_name']!, _staffNameMeta),
       );
     }
     if (data.containsKey('session_id')) {
@@ -1226,6 +1262,14 @@ class $OrdersTable extends Orders with TableInfo<$OrdersTable, Order> {
         DriftSqlType.string,
         data['${effectivePrefix}clerk_pin'],
       ),
+      staffId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}staff_id'],
+      ),
+      staffName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}staff_name'],
+      ),
       sessionId: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}session_id'],
@@ -1309,6 +1353,16 @@ class Order extends DataClass implements Insertable<Order> {
   final int? tableNumber;
   final String? clerkPin;
 
+  /// Who settled the sale. Stamped at settlement rather than at open, for the
+  /// same reason [sessionId] is: a bill parked across a shift change belongs to
+  /// whoever actually took the money for it.
+  ///
+  /// The name is stored alongside the id because a receipt reprinted next year
+  /// should still say who served it, even if that person has since been removed
+  /// from the staff list.
+  final int? staffId;
+  final String? staffName;
+
   /// The trading period this sale belongs to. Fixed at settlement so a Z
   /// report can never be changed by a later sale.
   final String? sessionId;
@@ -1349,6 +1403,8 @@ class Order extends DataClass implements Insertable<Order> {
     required this.status,
     this.tableNumber,
     this.clerkPin,
+    this.staffId,
+    this.staffName,
     this.sessionId,
     this.customerId,
     this.splitFromOrderId,
@@ -1376,6 +1432,12 @@ class Order extends DataClass implements Insertable<Order> {
     }
     if (!nullToAbsent || clerkPin != null) {
       map['clerk_pin'] = Variable<String>(clerkPin);
+    }
+    if (!nullToAbsent || staffId != null) {
+      map['staff_id'] = Variable<int>(staffId);
+    }
+    if (!nullToAbsent || staffName != null) {
+      map['staff_name'] = Variable<String>(staffName);
     }
     if (!nullToAbsent || sessionId != null) {
       map['session_id'] = Variable<String>(sessionId);
@@ -1422,6 +1484,12 @@ class Order extends DataClass implements Insertable<Order> {
       clerkPin: clerkPin == null && nullToAbsent
           ? const Value.absent()
           : Value(clerkPin),
+      staffId: staffId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(staffId),
+      staffName: staffName == null && nullToAbsent
+          ? const Value.absent()
+          : Value(staffName),
       sessionId: sessionId == null && nullToAbsent
           ? const Value.absent()
           : Value(sessionId),
@@ -1467,6 +1535,8 @@ class Order extends DataClass implements Insertable<Order> {
       status: serializer.fromJson<String>(json['status']),
       tableNumber: serializer.fromJson<int?>(json['tableNumber']),
       clerkPin: serializer.fromJson<String?>(json['clerkPin']),
+      staffId: serializer.fromJson<int?>(json['staffId']),
+      staffName: serializer.fromJson<String?>(json['staffName']),
       sessionId: serializer.fromJson<String?>(json['sessionId']),
       customerId: serializer.fromJson<String?>(json['customerId']),
       splitFromOrderId: serializer.fromJson<String?>(json['splitFromOrderId']),
@@ -1499,6 +1569,8 @@ class Order extends DataClass implements Insertable<Order> {
       'status': serializer.toJson<String>(status),
       'tableNumber': serializer.toJson<int?>(tableNumber),
       'clerkPin': serializer.toJson<String?>(clerkPin),
+      'staffId': serializer.toJson<int?>(staffId),
+      'staffName': serializer.toJson<String?>(staffName),
       'sessionId': serializer.toJson<String?>(sessionId),
       'customerId': serializer.toJson<String?>(customerId),
       'splitFromOrderId': serializer.toJson<String?>(splitFromOrderId),
@@ -1523,6 +1595,8 @@ class Order extends DataClass implements Insertable<Order> {
     String? status,
     Value<int?> tableNumber = const Value.absent(),
     Value<String?> clerkPin = const Value.absent(),
+    Value<int?> staffId = const Value.absent(),
+    Value<String?> staffName = const Value.absent(),
     Value<String?> sessionId = const Value.absent(),
     Value<String?> customerId = const Value.absent(),
     Value<String?> splitFromOrderId = const Value.absent(),
@@ -1544,6 +1618,8 @@ class Order extends DataClass implements Insertable<Order> {
     status: status ?? this.status,
     tableNumber: tableNumber.present ? tableNumber.value : this.tableNumber,
     clerkPin: clerkPin.present ? clerkPin.value : this.clerkPin,
+    staffId: staffId.present ? staffId.value : this.staffId,
+    staffName: staffName.present ? staffName.value : this.staffName,
     sessionId: sessionId.present ? sessionId.value : this.sessionId,
     customerId: customerId.present ? customerId.value : this.customerId,
     splitFromOrderId: splitFromOrderId.present
@@ -1571,6 +1647,8 @@ class Order extends DataClass implements Insertable<Order> {
           ? data.tableNumber.value
           : this.tableNumber,
       clerkPin: data.clerkPin.present ? data.clerkPin.value : this.clerkPin,
+      staffId: data.staffId.present ? data.staffId.value : this.staffId,
+      staffName: data.staffName.present ? data.staffName.value : this.staffName,
       sessionId: data.sessionId.present ? data.sessionId.value : this.sessionId,
       customerId: data.customerId.present
           ? data.customerId.value
@@ -1615,6 +1693,8 @@ class Order extends DataClass implements Insertable<Order> {
           ..write('status: $status, ')
           ..write('tableNumber: $tableNumber, ')
           ..write('clerkPin: $clerkPin, ')
+          ..write('staffId: $staffId, ')
+          ..write('staffName: $staffName, ')
           ..write('sessionId: $sessionId, ')
           ..write('customerId: $customerId, ')
           ..write('splitFromOrderId: $splitFromOrderId, ')
@@ -1636,11 +1716,13 @@ class Order extends DataClass implements Insertable<Order> {
   }
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll([
     id,
     status,
     tableNumber,
     clerkPin,
+    staffId,
+    staffName,
     sessionId,
     customerId,
     splitFromOrderId,
@@ -1657,7 +1739,7 @@ class Order extends DataClass implements Insertable<Order> {
     createdAt,
     closedAt,
     syncedAt,
-  );
+  ]);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -1666,6 +1748,8 @@ class Order extends DataClass implements Insertable<Order> {
           other.status == this.status &&
           other.tableNumber == this.tableNumber &&
           other.clerkPin == this.clerkPin &&
+          other.staffId == this.staffId &&
+          other.staffName == this.staffName &&
           other.sessionId == this.sessionId &&
           other.customerId == this.customerId &&
           other.splitFromOrderId == this.splitFromOrderId &&
@@ -1689,6 +1773,8 @@ class OrdersCompanion extends UpdateCompanion<Order> {
   final Value<String> status;
   final Value<int?> tableNumber;
   final Value<String?> clerkPin;
+  final Value<int?> staffId;
+  final Value<String?> staffName;
   final Value<String?> sessionId;
   final Value<String?> customerId;
   final Value<String?> splitFromOrderId;
@@ -1711,6 +1797,8 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     this.status = const Value.absent(),
     this.tableNumber = const Value.absent(),
     this.clerkPin = const Value.absent(),
+    this.staffId = const Value.absent(),
+    this.staffName = const Value.absent(),
     this.sessionId = const Value.absent(),
     this.customerId = const Value.absent(),
     this.splitFromOrderId = const Value.absent(),
@@ -1734,6 +1822,8 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     this.status = const Value.absent(),
     this.tableNumber = const Value.absent(),
     this.clerkPin = const Value.absent(),
+    this.staffId = const Value.absent(),
+    this.staffName = const Value.absent(),
     this.sessionId = const Value.absent(),
     this.customerId = const Value.absent(),
     this.splitFromOrderId = const Value.absent(),
@@ -1757,6 +1847,8 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     Expression<String>? status,
     Expression<int>? tableNumber,
     Expression<String>? clerkPin,
+    Expression<int>? staffId,
+    Expression<String>? staffName,
     Expression<String>? sessionId,
     Expression<String>? customerId,
     Expression<String>? splitFromOrderId,
@@ -1780,6 +1872,8 @@ class OrdersCompanion extends UpdateCompanion<Order> {
       if (status != null) 'status': status,
       if (tableNumber != null) 'table_number': tableNumber,
       if (clerkPin != null) 'clerk_pin': clerkPin,
+      if (staffId != null) 'staff_id': staffId,
+      if (staffName != null) 'staff_name': staffName,
       if (sessionId != null) 'session_id': sessionId,
       if (customerId != null) 'customer_id': customerId,
       if (splitFromOrderId != null) 'split_from_order_id': splitFromOrderId,
@@ -1808,6 +1902,8 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     Value<String>? status,
     Value<int?>? tableNumber,
     Value<String?>? clerkPin,
+    Value<int?>? staffId,
+    Value<String?>? staffName,
     Value<String?>? sessionId,
     Value<String?>? customerId,
     Value<String?>? splitFromOrderId,
@@ -1831,6 +1927,8 @@ class OrdersCompanion extends UpdateCompanion<Order> {
       status: status ?? this.status,
       tableNumber: tableNumber ?? this.tableNumber,
       clerkPin: clerkPin ?? this.clerkPin,
+      staffId: staffId ?? this.staffId,
+      staffName: staffName ?? this.staffName,
       sessionId: sessionId ?? this.sessionId,
       customerId: customerId ?? this.customerId,
       splitFromOrderId: splitFromOrderId ?? this.splitFromOrderId,
@@ -1866,6 +1964,12 @@ class OrdersCompanion extends UpdateCompanion<Order> {
     }
     if (clerkPin.present) {
       map['clerk_pin'] = Variable<String>(clerkPin.value);
+    }
+    if (staffId.present) {
+      map['staff_id'] = Variable<int>(staffId.value);
+    }
+    if (staffName.present) {
+      map['staff_name'] = Variable<String>(staffName.value);
     }
     if (sessionId.present) {
       map['session_id'] = Variable<String>(sessionId.value);
@@ -1932,6 +2036,8 @@ class OrdersCompanion extends UpdateCompanion<Order> {
           ..write('status: $status, ')
           ..write('tableNumber: $tableNumber, ')
           ..write('clerkPin: $clerkPin, ')
+          ..write('staffId: $staffId, ')
+          ..write('staffName: $staffName, ')
           ..write('sessionId: $sessionId, ')
           ..write('customerId: $customerId, ')
           ..write('splitFromOrderId: $splitFromOrderId, ')
@@ -2057,6 +2163,28 @@ class $OrderLinesTable extends OrderLines
     requiredDuringInsert: false,
     defaultValue: const Constant(0),
   );
+  static const VerificationMeta _addedByMeta = const VerificationMeta(
+    'addedBy',
+  );
+  @override
+  late final GeneratedColumn<String> addedBy = GeneratedColumn<String>(
+    'added_by',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _addedAtMeta = const VerificationMeta(
+    'addedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> addedAt = GeneratedColumn<DateTime>(
+    'added_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -2068,6 +2196,8 @@ class $OrderLinesTable extends OrderLines
     taxPercentage,
     notes,
     lineDiscountMinor,
+    addedBy,
+    addedAt,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -2151,6 +2281,18 @@ class $OrderLinesTable extends OrderLines
         ),
       );
     }
+    if (data.containsKey('added_by')) {
+      context.handle(
+        _addedByMeta,
+        addedBy.isAcceptableOrUnknown(data['added_by']!, _addedByMeta),
+      );
+    }
+    if (data.containsKey('added_at')) {
+      context.handle(
+        _addedAtMeta,
+        addedAt.isAcceptableOrUnknown(data['added_at']!, _addedAtMeta),
+      );
+    }
     return context;
   }
 
@@ -2196,6 +2338,14 @@ class $OrderLinesTable extends OrderLines
         DriftSqlType.int,
         data['${effectivePrefix}line_discount_minor'],
       )!,
+      addedBy: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}added_by'],
+      ),
+      addedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}added_at'],
+      ),
     );
   }
 
@@ -2218,6 +2368,19 @@ class OrderLine extends DataClass implements Insertable<OrderLine> {
   /// A discount on this single line, keyed in by the clerk, in pence off the
   /// line total. Separate from the order-level discount.
   final int lineDiscountMinor;
+
+  /// Who put this item on the bill, and when.
+  ///
+  /// A bill parked on a table and added to across a shift has no single author,
+  /// so "who rang this up?" cannot be answered at the order level. The check
+  /// view groups by these two and prints a `Sam · 19:42` header above each run
+  /// of items.
+  ///
+  /// Nullable: lines already in the database, and any rung up before staff
+  /// sign-on was switched on at the venue, simply have no attribution and are
+  /// shown without a header.
+  final String? addedBy;
+  final DateTime? addedAt;
   const OrderLine({
     required this.id,
     required this.orderId,
@@ -2228,6 +2391,8 @@ class OrderLine extends DataClass implements Insertable<OrderLine> {
     required this.taxPercentage,
     this.notes,
     required this.lineDiscountMinor,
+    this.addedBy,
+    this.addedAt,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -2243,6 +2408,12 @@ class OrderLine extends DataClass implements Insertable<OrderLine> {
       map['notes'] = Variable<String>(notes);
     }
     map['line_discount_minor'] = Variable<int>(lineDiscountMinor);
+    if (!nullToAbsent || addedBy != null) {
+      map['added_by'] = Variable<String>(addedBy);
+    }
+    if (!nullToAbsent || addedAt != null) {
+      map['added_at'] = Variable<DateTime>(addedAt);
+    }
     return map;
   }
 
@@ -2259,6 +2430,12 @@ class OrderLine extends DataClass implements Insertable<OrderLine> {
           ? const Value.absent()
           : Value(notes),
       lineDiscountMinor: Value(lineDiscountMinor),
+      addedBy: addedBy == null && nullToAbsent
+          ? const Value.absent()
+          : Value(addedBy),
+      addedAt: addedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(addedAt),
     );
   }
 
@@ -2277,6 +2454,8 @@ class OrderLine extends DataClass implements Insertable<OrderLine> {
       taxPercentage: serializer.fromJson<double>(json['taxPercentage']),
       notes: serializer.fromJson<String?>(json['notes']),
       lineDiscountMinor: serializer.fromJson<int>(json['lineDiscountMinor']),
+      addedBy: serializer.fromJson<String?>(json['addedBy']),
+      addedAt: serializer.fromJson<DateTime?>(json['addedAt']),
     );
   }
   @override
@@ -2292,6 +2471,8 @@ class OrderLine extends DataClass implements Insertable<OrderLine> {
       'taxPercentage': serializer.toJson<double>(taxPercentage),
       'notes': serializer.toJson<String?>(notes),
       'lineDiscountMinor': serializer.toJson<int>(lineDiscountMinor),
+      'addedBy': serializer.toJson<String?>(addedBy),
+      'addedAt': serializer.toJson<DateTime?>(addedAt),
     };
   }
 
@@ -2305,6 +2486,8 @@ class OrderLine extends DataClass implements Insertable<OrderLine> {
     double? taxPercentage,
     Value<String?> notes = const Value.absent(),
     int? lineDiscountMinor,
+    Value<String?> addedBy = const Value.absent(),
+    Value<DateTime?> addedAt = const Value.absent(),
   }) => OrderLine(
     id: id ?? this.id,
     orderId: orderId ?? this.orderId,
@@ -2315,6 +2498,8 @@ class OrderLine extends DataClass implements Insertable<OrderLine> {
     taxPercentage: taxPercentage ?? this.taxPercentage,
     notes: notes.present ? notes.value : this.notes,
     lineDiscountMinor: lineDiscountMinor ?? this.lineDiscountMinor,
+    addedBy: addedBy.present ? addedBy.value : this.addedBy,
+    addedAt: addedAt.present ? addedAt.value : this.addedAt,
   );
   OrderLine copyWithCompanion(OrderLinesCompanion data) {
     return OrderLine(
@@ -2333,6 +2518,8 @@ class OrderLine extends DataClass implements Insertable<OrderLine> {
       lineDiscountMinor: data.lineDiscountMinor.present
           ? data.lineDiscountMinor.value
           : this.lineDiscountMinor,
+      addedBy: data.addedBy.present ? data.addedBy.value : this.addedBy,
+      addedAt: data.addedAt.present ? data.addedAt.value : this.addedAt,
     );
   }
 
@@ -2347,7 +2534,9 @@ class OrderLine extends DataClass implements Insertable<OrderLine> {
           ..write('unitPriceMinor: $unitPriceMinor, ')
           ..write('taxPercentage: $taxPercentage, ')
           ..write('notes: $notes, ')
-          ..write('lineDiscountMinor: $lineDiscountMinor')
+          ..write('lineDiscountMinor: $lineDiscountMinor, ')
+          ..write('addedBy: $addedBy, ')
+          ..write('addedAt: $addedAt')
           ..write(')'))
         .toString();
   }
@@ -2363,6 +2552,8 @@ class OrderLine extends DataClass implements Insertable<OrderLine> {
     taxPercentage,
     notes,
     lineDiscountMinor,
+    addedBy,
+    addedAt,
   );
   @override
   bool operator ==(Object other) =>
@@ -2376,7 +2567,9 @@ class OrderLine extends DataClass implements Insertable<OrderLine> {
           other.unitPriceMinor == this.unitPriceMinor &&
           other.taxPercentage == this.taxPercentage &&
           other.notes == this.notes &&
-          other.lineDiscountMinor == this.lineDiscountMinor);
+          other.lineDiscountMinor == this.lineDiscountMinor &&
+          other.addedBy == this.addedBy &&
+          other.addedAt == this.addedAt);
 }
 
 class OrderLinesCompanion extends UpdateCompanion<OrderLine> {
@@ -2389,6 +2582,8 @@ class OrderLinesCompanion extends UpdateCompanion<OrderLine> {
   final Value<double> taxPercentage;
   final Value<String?> notes;
   final Value<int> lineDiscountMinor;
+  final Value<String?> addedBy;
+  final Value<DateTime?> addedAt;
   final Value<int> rowid;
   const OrderLinesCompanion({
     this.id = const Value.absent(),
@@ -2400,6 +2595,8 @@ class OrderLinesCompanion extends UpdateCompanion<OrderLine> {
     this.taxPercentage = const Value.absent(),
     this.notes = const Value.absent(),
     this.lineDiscountMinor = const Value.absent(),
+    this.addedBy = const Value.absent(),
+    this.addedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   OrderLinesCompanion.insert({
@@ -2412,6 +2609,8 @@ class OrderLinesCompanion extends UpdateCompanion<OrderLine> {
     this.taxPercentage = const Value.absent(),
     this.notes = const Value.absent(),
     this.lineDiscountMinor = const Value.absent(),
+    this.addedBy = const Value.absent(),
+    this.addedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        orderId = Value(orderId),
@@ -2428,6 +2627,8 @@ class OrderLinesCompanion extends UpdateCompanion<OrderLine> {
     Expression<double>? taxPercentage,
     Expression<String>? notes,
     Expression<int>? lineDiscountMinor,
+    Expression<String>? addedBy,
+    Expression<DateTime>? addedAt,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -2440,6 +2641,8 @@ class OrderLinesCompanion extends UpdateCompanion<OrderLine> {
       if (taxPercentage != null) 'tax_percentage': taxPercentage,
       if (notes != null) 'notes': notes,
       if (lineDiscountMinor != null) 'line_discount_minor': lineDiscountMinor,
+      if (addedBy != null) 'added_by': addedBy,
+      if (addedAt != null) 'added_at': addedAt,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -2454,6 +2657,8 @@ class OrderLinesCompanion extends UpdateCompanion<OrderLine> {
     Value<double>? taxPercentage,
     Value<String?>? notes,
     Value<int>? lineDiscountMinor,
+    Value<String?>? addedBy,
+    Value<DateTime?>? addedAt,
     Value<int>? rowid,
   }) {
     return OrderLinesCompanion(
@@ -2466,6 +2671,8 @@ class OrderLinesCompanion extends UpdateCompanion<OrderLine> {
       taxPercentage: taxPercentage ?? this.taxPercentage,
       notes: notes ?? this.notes,
       lineDiscountMinor: lineDiscountMinor ?? this.lineDiscountMinor,
+      addedBy: addedBy ?? this.addedBy,
+      addedAt: addedAt ?? this.addedAt,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -2500,6 +2707,12 @@ class OrderLinesCompanion extends UpdateCompanion<OrderLine> {
     if (lineDiscountMinor.present) {
       map['line_discount_minor'] = Variable<int>(lineDiscountMinor.value);
     }
+    if (addedBy.present) {
+      map['added_by'] = Variable<String>(addedBy.value);
+    }
+    if (addedAt.present) {
+      map['added_at'] = Variable<DateTime>(addedAt.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -2518,6 +2731,8 @@ class OrderLinesCompanion extends UpdateCompanion<OrderLine> {
           ..write('taxPercentage: $taxPercentage, ')
           ..write('notes: $notes, ')
           ..write('lineDiscountMinor: $lineDiscountMinor, ')
+          ..write('addedBy: $addedBy, ')
+          ..write('addedAt: $addedAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -2584,6 +2799,17 @@ class $PaymentsTable extends Payments with TableInfo<$PaymentsTable, Payment> {
     requiredDuringInsert: false,
     defaultValue: currentDateAndTime,
   );
+  static const VerificationMeta _cashBreakdownMeta = const VerificationMeta(
+    'cashBreakdown',
+  );
+  @override
+  late final GeneratedColumn<String> cashBreakdown = GeneratedColumn<String>(
+    'cash_breakdown',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -2591,6 +2817,7 @@ class $PaymentsTable extends Payments with TableInfo<$PaymentsTable, Payment> {
     method,
     amountMinor,
     takenAt,
+    cashBreakdown,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -2642,6 +2869,15 @@ class $PaymentsTable extends Payments with TableInfo<$PaymentsTable, Payment> {
         takenAt.isAcceptableOrUnknown(data['taken_at']!, _takenAtMeta),
       );
     }
+    if (data.containsKey('cash_breakdown')) {
+      context.handle(
+        _cashBreakdownMeta,
+        cashBreakdown.isAcceptableOrUnknown(
+          data['cash_breakdown']!,
+          _cashBreakdownMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -2671,6 +2907,10 @@ class $PaymentsTable extends Payments with TableInfo<$PaymentsTable, Payment> {
         DriftSqlType.dateTime,
         data['${effectivePrefix}taken_at'],
       )!,
+      cashBreakdown: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}cash_breakdown'],
+      ),
     );
   }
 
@@ -2688,12 +2928,21 @@ class Payment extends DataClass implements Insertable<Payment> {
   final String method;
   final int amountMinor;
   final DateTime takenAt;
+
+  /// The notes and coins actually handed over, when the clerk counted them in
+  /// on the cash keys — e.g. `2000x2,500x1` for two twenties and a five.
+  ///
+  /// Kept as a compact string rather than a related table: it is written once,
+  /// read back only to reprint the same receipt, and never queried across
+  /// sales. Null for card, and for cash simply keyed as an amount.
+  final String? cashBreakdown;
   const Payment({
     required this.id,
     required this.orderId,
     required this.method,
     required this.amountMinor,
     required this.takenAt,
+    this.cashBreakdown,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -2703,6 +2952,9 @@ class Payment extends DataClass implements Insertable<Payment> {
     map['method'] = Variable<String>(method);
     map['amount_minor'] = Variable<int>(amountMinor);
     map['taken_at'] = Variable<DateTime>(takenAt);
+    if (!nullToAbsent || cashBreakdown != null) {
+      map['cash_breakdown'] = Variable<String>(cashBreakdown);
+    }
     return map;
   }
 
@@ -2713,6 +2965,9 @@ class Payment extends DataClass implements Insertable<Payment> {
       method: Value(method),
       amountMinor: Value(amountMinor),
       takenAt: Value(takenAt),
+      cashBreakdown: cashBreakdown == null && nullToAbsent
+          ? const Value.absent()
+          : Value(cashBreakdown),
     );
   }
 
@@ -2727,6 +2982,7 @@ class Payment extends DataClass implements Insertable<Payment> {
       method: serializer.fromJson<String>(json['method']),
       amountMinor: serializer.fromJson<int>(json['amountMinor']),
       takenAt: serializer.fromJson<DateTime>(json['takenAt']),
+      cashBreakdown: serializer.fromJson<String?>(json['cashBreakdown']),
     );
   }
   @override
@@ -2738,6 +2994,7 @@ class Payment extends DataClass implements Insertable<Payment> {
       'method': serializer.toJson<String>(method),
       'amountMinor': serializer.toJson<int>(amountMinor),
       'takenAt': serializer.toJson<DateTime>(takenAt),
+      'cashBreakdown': serializer.toJson<String?>(cashBreakdown),
     };
   }
 
@@ -2747,12 +3004,16 @@ class Payment extends DataClass implements Insertable<Payment> {
     String? method,
     int? amountMinor,
     DateTime? takenAt,
+    Value<String?> cashBreakdown = const Value.absent(),
   }) => Payment(
     id: id ?? this.id,
     orderId: orderId ?? this.orderId,
     method: method ?? this.method,
     amountMinor: amountMinor ?? this.amountMinor,
     takenAt: takenAt ?? this.takenAt,
+    cashBreakdown: cashBreakdown.present
+        ? cashBreakdown.value
+        : this.cashBreakdown,
   );
   Payment copyWithCompanion(PaymentsCompanion data) {
     return Payment(
@@ -2763,6 +3024,9 @@ class Payment extends DataClass implements Insertable<Payment> {
           ? data.amountMinor.value
           : this.amountMinor,
       takenAt: data.takenAt.present ? data.takenAt.value : this.takenAt,
+      cashBreakdown: data.cashBreakdown.present
+          ? data.cashBreakdown.value
+          : this.cashBreakdown,
     );
   }
 
@@ -2773,13 +3037,15 @@ class Payment extends DataClass implements Insertable<Payment> {
           ..write('orderId: $orderId, ')
           ..write('method: $method, ')
           ..write('amountMinor: $amountMinor, ')
-          ..write('takenAt: $takenAt')
+          ..write('takenAt: $takenAt, ')
+          ..write('cashBreakdown: $cashBreakdown')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(id, orderId, method, amountMinor, takenAt);
+  int get hashCode =>
+      Object.hash(id, orderId, method, amountMinor, takenAt, cashBreakdown);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -2788,7 +3054,8 @@ class Payment extends DataClass implements Insertable<Payment> {
           other.orderId == this.orderId &&
           other.method == this.method &&
           other.amountMinor == this.amountMinor &&
-          other.takenAt == this.takenAt);
+          other.takenAt == this.takenAt &&
+          other.cashBreakdown == this.cashBreakdown);
 }
 
 class PaymentsCompanion extends UpdateCompanion<Payment> {
@@ -2797,6 +3064,7 @@ class PaymentsCompanion extends UpdateCompanion<Payment> {
   final Value<String> method;
   final Value<int> amountMinor;
   final Value<DateTime> takenAt;
+  final Value<String?> cashBreakdown;
   final Value<int> rowid;
   const PaymentsCompanion({
     this.id = const Value.absent(),
@@ -2804,6 +3072,7 @@ class PaymentsCompanion extends UpdateCompanion<Payment> {
     this.method = const Value.absent(),
     this.amountMinor = const Value.absent(),
     this.takenAt = const Value.absent(),
+    this.cashBreakdown = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   PaymentsCompanion.insert({
@@ -2812,6 +3081,7 @@ class PaymentsCompanion extends UpdateCompanion<Payment> {
     required String method,
     required int amountMinor,
     this.takenAt = const Value.absent(),
+    this.cashBreakdown = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        orderId = Value(orderId),
@@ -2823,6 +3093,7 @@ class PaymentsCompanion extends UpdateCompanion<Payment> {
     Expression<String>? method,
     Expression<int>? amountMinor,
     Expression<DateTime>? takenAt,
+    Expression<String>? cashBreakdown,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -2831,6 +3102,7 @@ class PaymentsCompanion extends UpdateCompanion<Payment> {
       if (method != null) 'method': method,
       if (amountMinor != null) 'amount_minor': amountMinor,
       if (takenAt != null) 'taken_at': takenAt,
+      if (cashBreakdown != null) 'cash_breakdown': cashBreakdown,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -2841,6 +3113,7 @@ class PaymentsCompanion extends UpdateCompanion<Payment> {
     Value<String>? method,
     Value<int>? amountMinor,
     Value<DateTime>? takenAt,
+    Value<String?>? cashBreakdown,
     Value<int>? rowid,
   }) {
     return PaymentsCompanion(
@@ -2849,6 +3122,7 @@ class PaymentsCompanion extends UpdateCompanion<Payment> {
       method: method ?? this.method,
       amountMinor: amountMinor ?? this.amountMinor,
       takenAt: takenAt ?? this.takenAt,
+      cashBreakdown: cashBreakdown ?? this.cashBreakdown,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -2871,6 +3145,9 @@ class PaymentsCompanion extends UpdateCompanion<Payment> {
     if (takenAt.present) {
       map['taken_at'] = Variable<DateTime>(takenAt.value);
     }
+    if (cashBreakdown.present) {
+      map['cash_breakdown'] = Variable<String>(cashBreakdown.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -2885,6 +3162,7 @@ class PaymentsCompanion extends UpdateCompanion<Payment> {
           ..write('method: $method, ')
           ..write('amountMinor: $amountMinor, ')
           ..write('takenAt: $takenAt, ')
+          ..write('cashBreakdown: $cashBreakdown, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -5426,6 +5704,979 @@ class MixMatchProductsCompanion extends UpdateCompanion<MixMatchProduct> {
   }
 }
 
+class $DepartmentsTable extends Departments
+    with TableInfo<$DepartmentsTable, Department> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $DepartmentsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _nameMeta = const VerificationMeta('name');
+  @override
+  late final GeneratedColumn<String> name = GeneratedColumn<String>(
+    'name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _emojiMeta = const VerificationMeta('emoji');
+  @override
+  late final GeneratedColumn<String> emoji = GeneratedColumn<String>(
+    'emoji',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _imageUrlMeta = const VerificationMeta(
+    'imageUrl',
+  );
+  @override
+  late final GeneratedColumn<String> imageUrl = GeneratedColumn<String>(
+    'image_url',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _buttonColorMeta = const VerificationMeta(
+    'buttonColor',
+  );
+  @override
+  late final GeneratedColumn<String> buttonColor = GeneratedColumn<String>(
+    'button_color',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _sortOrderMeta = const VerificationMeta(
+    'sortOrder',
+  );
+  @override
+  late final GeneratedColumn<int> sortOrder = GeneratedColumn<int>(
+    'sort_order',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    name,
+    emoji,
+    imageUrl,
+    buttonColor,
+    sortOrder,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'departments';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<Department> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('name')) {
+      context.handle(
+        _nameMeta,
+        name.isAcceptableOrUnknown(data['name']!, _nameMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_nameMeta);
+    }
+    if (data.containsKey('emoji')) {
+      context.handle(
+        _emojiMeta,
+        emoji.isAcceptableOrUnknown(data['emoji']!, _emojiMeta),
+      );
+    }
+    if (data.containsKey('image_url')) {
+      context.handle(
+        _imageUrlMeta,
+        imageUrl.isAcceptableOrUnknown(data['image_url']!, _imageUrlMeta),
+      );
+    }
+    if (data.containsKey('button_color')) {
+      context.handle(
+        _buttonColorMeta,
+        buttonColor.isAcceptableOrUnknown(
+          data['button_color']!,
+          _buttonColorMeta,
+        ),
+      );
+    }
+    if (data.containsKey('sort_order')) {
+      context.handle(
+        _sortOrderMeta,
+        sortOrder.isAcceptableOrUnknown(data['sort_order']!, _sortOrderMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {name};
+  @override
+  Department map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return Department(
+      name: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}name'],
+      )!,
+      emoji: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}emoji'],
+      ),
+      imageUrl: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}image_url'],
+      ),
+      buttonColor: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}button_color'],
+      ),
+      sortOrder: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}sort_order'],
+      )!,
+    );
+  }
+
+  @override
+  $DepartmentsTable createAlias(String alias) {
+    return $DepartmentsTable(attachedDatabase, alias);
+  }
+}
+
+class Department extends DataClass implements Insertable<Department> {
+  final String name;
+  final String? emoji;
+  final String? imageUrl;
+
+  /// Overrides the till's built-in per-name colour.
+  final String? buttonColor;
+  final int sortOrder;
+  const Department({
+    required this.name,
+    this.emoji,
+    this.imageUrl,
+    this.buttonColor,
+    required this.sortOrder,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['name'] = Variable<String>(name);
+    if (!nullToAbsent || emoji != null) {
+      map['emoji'] = Variable<String>(emoji);
+    }
+    if (!nullToAbsent || imageUrl != null) {
+      map['image_url'] = Variable<String>(imageUrl);
+    }
+    if (!nullToAbsent || buttonColor != null) {
+      map['button_color'] = Variable<String>(buttonColor);
+    }
+    map['sort_order'] = Variable<int>(sortOrder);
+    return map;
+  }
+
+  DepartmentsCompanion toCompanion(bool nullToAbsent) {
+    return DepartmentsCompanion(
+      name: Value(name),
+      emoji: emoji == null && nullToAbsent
+          ? const Value.absent()
+          : Value(emoji),
+      imageUrl: imageUrl == null && nullToAbsent
+          ? const Value.absent()
+          : Value(imageUrl),
+      buttonColor: buttonColor == null && nullToAbsent
+          ? const Value.absent()
+          : Value(buttonColor),
+      sortOrder: Value(sortOrder),
+    );
+  }
+
+  factory Department.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return Department(
+      name: serializer.fromJson<String>(json['name']),
+      emoji: serializer.fromJson<String?>(json['emoji']),
+      imageUrl: serializer.fromJson<String?>(json['imageUrl']),
+      buttonColor: serializer.fromJson<String?>(json['buttonColor']),
+      sortOrder: serializer.fromJson<int>(json['sortOrder']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'name': serializer.toJson<String>(name),
+      'emoji': serializer.toJson<String?>(emoji),
+      'imageUrl': serializer.toJson<String?>(imageUrl),
+      'buttonColor': serializer.toJson<String?>(buttonColor),
+      'sortOrder': serializer.toJson<int>(sortOrder),
+    };
+  }
+
+  Department copyWith({
+    String? name,
+    Value<String?> emoji = const Value.absent(),
+    Value<String?> imageUrl = const Value.absent(),
+    Value<String?> buttonColor = const Value.absent(),
+    int? sortOrder,
+  }) => Department(
+    name: name ?? this.name,
+    emoji: emoji.present ? emoji.value : this.emoji,
+    imageUrl: imageUrl.present ? imageUrl.value : this.imageUrl,
+    buttonColor: buttonColor.present ? buttonColor.value : this.buttonColor,
+    sortOrder: sortOrder ?? this.sortOrder,
+  );
+  Department copyWithCompanion(DepartmentsCompanion data) {
+    return Department(
+      name: data.name.present ? data.name.value : this.name,
+      emoji: data.emoji.present ? data.emoji.value : this.emoji,
+      imageUrl: data.imageUrl.present ? data.imageUrl.value : this.imageUrl,
+      buttonColor: data.buttonColor.present
+          ? data.buttonColor.value
+          : this.buttonColor,
+      sortOrder: data.sortOrder.present ? data.sortOrder.value : this.sortOrder,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('Department(')
+          ..write('name: $name, ')
+          ..write('emoji: $emoji, ')
+          ..write('imageUrl: $imageUrl, ')
+          ..write('buttonColor: $buttonColor, ')
+          ..write('sortOrder: $sortOrder')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(name, emoji, imageUrl, buttonColor, sortOrder);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is Department &&
+          other.name == this.name &&
+          other.emoji == this.emoji &&
+          other.imageUrl == this.imageUrl &&
+          other.buttonColor == this.buttonColor &&
+          other.sortOrder == this.sortOrder);
+}
+
+class DepartmentsCompanion extends UpdateCompanion<Department> {
+  final Value<String> name;
+  final Value<String?> emoji;
+  final Value<String?> imageUrl;
+  final Value<String?> buttonColor;
+  final Value<int> sortOrder;
+  final Value<int> rowid;
+  const DepartmentsCompanion({
+    this.name = const Value.absent(),
+    this.emoji = const Value.absent(),
+    this.imageUrl = const Value.absent(),
+    this.buttonColor = const Value.absent(),
+    this.sortOrder = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  DepartmentsCompanion.insert({
+    required String name,
+    this.emoji = const Value.absent(),
+    this.imageUrl = const Value.absent(),
+    this.buttonColor = const Value.absent(),
+    this.sortOrder = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : name = Value(name);
+  static Insertable<Department> custom({
+    Expression<String>? name,
+    Expression<String>? emoji,
+    Expression<String>? imageUrl,
+    Expression<String>? buttonColor,
+    Expression<int>? sortOrder,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (name != null) 'name': name,
+      if (emoji != null) 'emoji': emoji,
+      if (imageUrl != null) 'image_url': imageUrl,
+      if (buttonColor != null) 'button_color': buttonColor,
+      if (sortOrder != null) 'sort_order': sortOrder,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  DepartmentsCompanion copyWith({
+    Value<String>? name,
+    Value<String?>? emoji,
+    Value<String?>? imageUrl,
+    Value<String?>? buttonColor,
+    Value<int>? sortOrder,
+    Value<int>? rowid,
+  }) {
+    return DepartmentsCompanion(
+      name: name ?? this.name,
+      emoji: emoji ?? this.emoji,
+      imageUrl: imageUrl ?? this.imageUrl,
+      buttonColor: buttonColor ?? this.buttonColor,
+      sortOrder: sortOrder ?? this.sortOrder,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (name.present) {
+      map['name'] = Variable<String>(name.value);
+    }
+    if (emoji.present) {
+      map['emoji'] = Variable<String>(emoji.value);
+    }
+    if (imageUrl.present) {
+      map['image_url'] = Variable<String>(imageUrl.value);
+    }
+    if (buttonColor.present) {
+      map['button_color'] = Variable<String>(buttonColor.value);
+    }
+    if (sortOrder.present) {
+      map['sort_order'] = Variable<int>(sortOrder.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DepartmentsCompanion(')
+          ..write('name: $name, ')
+          ..write('emoji: $emoji, ')
+          ..write('imageUrl: $imageUrl, ')
+          ..write('buttonColor: $buttonColor, ')
+          ..write('sortOrder: $sortOrder, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $CashDenominationsTable extends CashDenominations
+    with TableInfo<$CashDenominationsTable, CashDenomination> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $CashDenominationsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _valueMinorMeta = const VerificationMeta(
+    'valueMinor',
+  );
+  @override
+  late final GeneratedColumn<int> valueMinor = GeneratedColumn<int>(
+    'value_minor',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _labelMeta = const VerificationMeta('label');
+  @override
+  late final GeneratedColumn<String> label = GeneratedColumn<String>(
+    'label',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _imageUrlMeta = const VerificationMeta(
+    'imageUrl',
+  );
+  @override
+  late final GeneratedColumn<String> imageUrl = GeneratedColumn<String>(
+    'image_url',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _sortOrderMeta = const VerificationMeta(
+    'sortOrder',
+  );
+  @override
+  late final GeneratedColumn<int> sortOrder = GeneratedColumn<int>(
+    'sort_order',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    valueMinor,
+    label,
+    imageUrl,
+    sortOrder,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'cash_denominations';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<CashDenomination> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('value_minor')) {
+      context.handle(
+        _valueMinorMeta,
+        valueMinor.isAcceptableOrUnknown(data['value_minor']!, _valueMinorMeta),
+      );
+    }
+    if (data.containsKey('label')) {
+      context.handle(
+        _labelMeta,
+        label.isAcceptableOrUnknown(data['label']!, _labelMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_labelMeta);
+    }
+    if (data.containsKey('image_url')) {
+      context.handle(
+        _imageUrlMeta,
+        imageUrl.isAcceptableOrUnknown(data['image_url']!, _imageUrlMeta),
+      );
+    }
+    if (data.containsKey('sort_order')) {
+      context.handle(
+        _sortOrderMeta,
+        sortOrder.isAcceptableOrUnknown(data['sort_order']!, _sortOrderMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {valueMinor};
+  @override
+  CashDenomination map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return CashDenomination(
+      valueMinor: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}value_minor'],
+      )!,
+      label: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}label'],
+      )!,
+      imageUrl: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}image_url'],
+      ),
+      sortOrder: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}sort_order'],
+      )!,
+    );
+  }
+
+  @override
+  $CashDenominationsTable createAlias(String alias) {
+    return $CashDenominationsTable(attachedDatabase, alias);
+  }
+}
+
+class CashDenomination extends DataClass
+    implements Insertable<CashDenomination> {
+  /// Pence. £20 is 2000; the value doubles as the key, since two keys for the
+  /// same amount would only be a way to miscount the drawer.
+  final int valueMinor;
+
+  /// What the key says when the picture is missing.
+  final String label;
+
+  /// Absolute URL of the note artwork, resolved against the server at sync
+  /// time so the widget does not have to know where the server lives.
+  final String? imageUrl;
+  final int sortOrder;
+  const CashDenomination({
+    required this.valueMinor,
+    required this.label,
+    this.imageUrl,
+    required this.sortOrder,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['value_minor'] = Variable<int>(valueMinor);
+    map['label'] = Variable<String>(label);
+    if (!nullToAbsent || imageUrl != null) {
+      map['image_url'] = Variable<String>(imageUrl);
+    }
+    map['sort_order'] = Variable<int>(sortOrder);
+    return map;
+  }
+
+  CashDenominationsCompanion toCompanion(bool nullToAbsent) {
+    return CashDenominationsCompanion(
+      valueMinor: Value(valueMinor),
+      label: Value(label),
+      imageUrl: imageUrl == null && nullToAbsent
+          ? const Value.absent()
+          : Value(imageUrl),
+      sortOrder: Value(sortOrder),
+    );
+  }
+
+  factory CashDenomination.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return CashDenomination(
+      valueMinor: serializer.fromJson<int>(json['valueMinor']),
+      label: serializer.fromJson<String>(json['label']),
+      imageUrl: serializer.fromJson<String?>(json['imageUrl']),
+      sortOrder: serializer.fromJson<int>(json['sortOrder']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'valueMinor': serializer.toJson<int>(valueMinor),
+      'label': serializer.toJson<String>(label),
+      'imageUrl': serializer.toJson<String?>(imageUrl),
+      'sortOrder': serializer.toJson<int>(sortOrder),
+    };
+  }
+
+  CashDenomination copyWith({
+    int? valueMinor,
+    String? label,
+    Value<String?> imageUrl = const Value.absent(),
+    int? sortOrder,
+  }) => CashDenomination(
+    valueMinor: valueMinor ?? this.valueMinor,
+    label: label ?? this.label,
+    imageUrl: imageUrl.present ? imageUrl.value : this.imageUrl,
+    sortOrder: sortOrder ?? this.sortOrder,
+  );
+  CashDenomination copyWithCompanion(CashDenominationsCompanion data) {
+    return CashDenomination(
+      valueMinor: data.valueMinor.present
+          ? data.valueMinor.value
+          : this.valueMinor,
+      label: data.label.present ? data.label.value : this.label,
+      imageUrl: data.imageUrl.present ? data.imageUrl.value : this.imageUrl,
+      sortOrder: data.sortOrder.present ? data.sortOrder.value : this.sortOrder,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CashDenomination(')
+          ..write('valueMinor: $valueMinor, ')
+          ..write('label: $label, ')
+          ..write('imageUrl: $imageUrl, ')
+          ..write('sortOrder: $sortOrder')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(valueMinor, label, imageUrl, sortOrder);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is CashDenomination &&
+          other.valueMinor == this.valueMinor &&
+          other.label == this.label &&
+          other.imageUrl == this.imageUrl &&
+          other.sortOrder == this.sortOrder);
+}
+
+class CashDenominationsCompanion extends UpdateCompanion<CashDenomination> {
+  final Value<int> valueMinor;
+  final Value<String> label;
+  final Value<String?> imageUrl;
+  final Value<int> sortOrder;
+  const CashDenominationsCompanion({
+    this.valueMinor = const Value.absent(),
+    this.label = const Value.absent(),
+    this.imageUrl = const Value.absent(),
+    this.sortOrder = const Value.absent(),
+  });
+  CashDenominationsCompanion.insert({
+    this.valueMinor = const Value.absent(),
+    required String label,
+    this.imageUrl = const Value.absent(),
+    this.sortOrder = const Value.absent(),
+  }) : label = Value(label);
+  static Insertable<CashDenomination> custom({
+    Expression<int>? valueMinor,
+    Expression<String>? label,
+    Expression<String>? imageUrl,
+    Expression<int>? sortOrder,
+  }) {
+    return RawValuesInsertable({
+      if (valueMinor != null) 'value_minor': valueMinor,
+      if (label != null) 'label': label,
+      if (imageUrl != null) 'image_url': imageUrl,
+      if (sortOrder != null) 'sort_order': sortOrder,
+    });
+  }
+
+  CashDenominationsCompanion copyWith({
+    Value<int>? valueMinor,
+    Value<String>? label,
+    Value<String?>? imageUrl,
+    Value<int>? sortOrder,
+  }) {
+    return CashDenominationsCompanion(
+      valueMinor: valueMinor ?? this.valueMinor,
+      label: label ?? this.label,
+      imageUrl: imageUrl ?? this.imageUrl,
+      sortOrder: sortOrder ?? this.sortOrder,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (valueMinor.present) {
+      map['value_minor'] = Variable<int>(valueMinor.value);
+    }
+    if (label.present) {
+      map['label'] = Variable<String>(label.value);
+    }
+    if (imageUrl.present) {
+      map['image_url'] = Variable<String>(imageUrl.value);
+    }
+    if (sortOrder.present) {
+      map['sort_order'] = Variable<int>(sortOrder.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CashDenominationsCompanion(')
+          ..write('valueMinor: $valueMinor, ')
+          ..write('label: $label, ')
+          ..write('imageUrl: $imageUrl, ')
+          ..write('sortOrder: $sortOrder')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $StaffTable extends Staff with TableInfo<$StaffTable, StaffData> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $StaffTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _pluidMeta = const VerificationMeta('pluid');
+  @override
+  late final GeneratedColumn<int> pluid = GeneratedColumn<int>(
+    'pluid',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _nameMeta = const VerificationMeta('name');
+  @override
+  late final GeneratedColumn<String> name = GeneratedColumn<String>(
+    'name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _pinMeta = const VerificationMeta('pin');
+  @override
+  late final GeneratedColumn<String> pin = GeneratedColumn<String>(
+    'pin',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [id, pluid, name, pin];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'staff';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<StaffData> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('pluid')) {
+      context.handle(
+        _pluidMeta,
+        pluid.isAcceptableOrUnknown(data['pluid']!, _pluidMeta),
+      );
+    }
+    if (data.containsKey('name')) {
+      context.handle(
+        _nameMeta,
+        name.isAcceptableOrUnknown(data['name']!, _nameMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_nameMeta);
+    }
+    if (data.containsKey('pin')) {
+      context.handle(
+        _pinMeta,
+        pin.isAcceptableOrUnknown(data['pin']!, _pinMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_pinMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  StaffData map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return StaffData(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      pluid: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}pluid'],
+      )!,
+      name: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}name'],
+      )!,
+      pin: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}pin'],
+      )!,
+    );
+  }
+
+  @override
+  $StaffTable createAlias(String alias) {
+    return $StaffTable(attachedDatabase, alias);
+  }
+}
+
+class StaffData extends DataClass implements Insertable<StaffData> {
+  /// bo_clarks.id from the back office. The stable key a report groups by.
+  final int id;
+
+  /// The operator number a venue puts on a rota, not a database key.
+  final int pluid;
+  final String name;
+
+  /// The PIN as the back office holds it. See the class note above.
+  final String pin;
+  const StaffData({
+    required this.id,
+    required this.pluid,
+    required this.name,
+    required this.pin,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['pluid'] = Variable<int>(pluid);
+    map['name'] = Variable<String>(name);
+    map['pin'] = Variable<String>(pin);
+    return map;
+  }
+
+  StaffCompanion toCompanion(bool nullToAbsent) {
+    return StaffCompanion(
+      id: Value(id),
+      pluid: Value(pluid),
+      name: Value(name),
+      pin: Value(pin),
+    );
+  }
+
+  factory StaffData.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return StaffData(
+      id: serializer.fromJson<int>(json['id']),
+      pluid: serializer.fromJson<int>(json['pluid']),
+      name: serializer.fromJson<String>(json['name']),
+      pin: serializer.fromJson<String>(json['pin']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'pluid': serializer.toJson<int>(pluid),
+      'name': serializer.toJson<String>(name),
+      'pin': serializer.toJson<String>(pin),
+    };
+  }
+
+  StaffData copyWith({int? id, int? pluid, String? name, String? pin}) =>
+      StaffData(
+        id: id ?? this.id,
+        pluid: pluid ?? this.pluid,
+        name: name ?? this.name,
+        pin: pin ?? this.pin,
+      );
+  StaffData copyWithCompanion(StaffCompanion data) {
+    return StaffData(
+      id: data.id.present ? data.id.value : this.id,
+      pluid: data.pluid.present ? data.pluid.value : this.pluid,
+      name: data.name.present ? data.name.value : this.name,
+      pin: data.pin.present ? data.pin.value : this.pin,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('StaffData(')
+          ..write('id: $id, ')
+          ..write('pluid: $pluid, ')
+          ..write('name: $name, ')
+          ..write('pin: $pin')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(id, pluid, name, pin);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is StaffData &&
+          other.id == this.id &&
+          other.pluid == this.pluid &&
+          other.name == this.name &&
+          other.pin == this.pin);
+}
+
+class StaffCompanion extends UpdateCompanion<StaffData> {
+  final Value<int> id;
+  final Value<int> pluid;
+  final Value<String> name;
+  final Value<String> pin;
+  const StaffCompanion({
+    this.id = const Value.absent(),
+    this.pluid = const Value.absent(),
+    this.name = const Value.absent(),
+    this.pin = const Value.absent(),
+  });
+  StaffCompanion.insert({
+    this.id = const Value.absent(),
+    this.pluid = const Value.absent(),
+    required String name,
+    required String pin,
+  }) : name = Value(name),
+       pin = Value(pin);
+  static Insertable<StaffData> custom({
+    Expression<int>? id,
+    Expression<int>? pluid,
+    Expression<String>? name,
+    Expression<String>? pin,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (pluid != null) 'pluid': pluid,
+      if (name != null) 'name': name,
+      if (pin != null) 'pin': pin,
+    });
+  }
+
+  StaffCompanion copyWith({
+    Value<int>? id,
+    Value<int>? pluid,
+    Value<String>? name,
+    Value<String>? pin,
+  }) {
+    return StaffCompanion(
+      id: id ?? this.id,
+      pluid: pluid ?? this.pluid,
+      name: name ?? this.name,
+      pin: pin ?? this.pin,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (pluid.present) {
+      map['pluid'] = Variable<int>(pluid.value);
+    }
+    if (name.present) {
+      map['name'] = Variable<String>(name.value);
+    }
+    if (pin.present) {
+      map['pin'] = Variable<String>(pin.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('StaffCompanion(')
+          ..write('id: $id, ')
+          ..write('pluid: $pluid, ')
+          ..write('name: $name, ')
+          ..write('pin: $pin')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -5442,6 +6693,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $MixMatchProductsTable mixMatchProducts = $MixMatchProductsTable(
     this,
   );
+  late final $DepartmentsTable departments = $DepartmentsTable(this);
+  late final $CashDenominationsTable cashDenominations =
+      $CashDenominationsTable(this);
+  late final $StaffTable staff = $StaffTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -5458,6 +6713,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     loyaltyEntries,
     mixMatchDeals,
     mixMatchProducts,
+    departments,
+    cashDenominations,
+    staff,
   ];
 }
 
@@ -5823,6 +7081,8 @@ typedef $$OrdersTableCreateCompanionBuilder =
       Value<String> status,
       Value<int?> tableNumber,
       Value<String?> clerkPin,
+      Value<int?> staffId,
+      Value<String?> staffName,
       Value<String?> sessionId,
       Value<String?> customerId,
       Value<String?> splitFromOrderId,
@@ -5847,6 +7107,8 @@ typedef $$OrdersTableUpdateCompanionBuilder =
       Value<String> status,
       Value<int?> tableNumber,
       Value<String?> clerkPin,
+      Value<int?> staffId,
+      Value<String?> staffName,
       Value<String?> sessionId,
       Value<String?> customerId,
       Value<String?> splitFromOrderId,
@@ -5934,6 +7196,16 @@ class $$OrdersTableFilterComposer
 
   ColumnFilters<String> get clerkPin => $composableBuilder(
     column: $table.clerkPin,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get staffId => $composableBuilder(
+    column: $table.staffId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get staffName => $composableBuilder(
+    column: $table.staffName,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -6097,6 +7369,16 @@ class $$OrdersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get staffId => $composableBuilder(
+    column: $table.staffId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get staffName => $composableBuilder(
+    column: $table.staffName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get sessionId => $composableBuilder(
     column: $table.sessionId,
     builder: (column) => ColumnOrderings(column),
@@ -6200,6 +7482,12 @@ class $$OrdersTableAnnotationComposer
 
   GeneratedColumn<String> get clerkPin =>
       $composableBuilder(column: $table.clerkPin, builder: (column) => column);
+
+  GeneratedColumn<int> get staffId =>
+      $composableBuilder(column: $table.staffId, builder: (column) => column);
+
+  GeneratedColumn<String> get staffName =>
+      $composableBuilder(column: $table.staffName, builder: (column) => column);
 
   GeneratedColumn<String> get sessionId =>
       $composableBuilder(column: $table.sessionId, builder: (column) => column);
@@ -6350,6 +7638,8 @@ class $$OrdersTableTableManager
                 Value<String> status = const Value.absent(),
                 Value<int?> tableNumber = const Value.absent(),
                 Value<String?> clerkPin = const Value.absent(),
+                Value<int?> staffId = const Value.absent(),
+                Value<String?> staffName = const Value.absent(),
                 Value<String?> sessionId = const Value.absent(),
                 Value<String?> customerId = const Value.absent(),
                 Value<String?> splitFromOrderId = const Value.absent(),
@@ -6372,6 +7662,8 @@ class $$OrdersTableTableManager
                 status: status,
                 tableNumber: tableNumber,
                 clerkPin: clerkPin,
+                staffId: staffId,
+                staffName: staffName,
                 sessionId: sessionId,
                 customerId: customerId,
                 splitFromOrderId: splitFromOrderId,
@@ -6396,6 +7688,8 @@ class $$OrdersTableTableManager
                 Value<String> status = const Value.absent(),
                 Value<int?> tableNumber = const Value.absent(),
                 Value<String?> clerkPin = const Value.absent(),
+                Value<int?> staffId = const Value.absent(),
+                Value<String?> staffName = const Value.absent(),
                 Value<String?> sessionId = const Value.absent(),
                 Value<String?> customerId = const Value.absent(),
                 Value<String?> splitFromOrderId = const Value.absent(),
@@ -6418,6 +7712,8 @@ class $$OrdersTableTableManager
                 status: status,
                 tableNumber: tableNumber,
                 clerkPin: clerkPin,
+                staffId: staffId,
+                staffName: staffName,
                 sessionId: sessionId,
                 customerId: customerId,
                 splitFromOrderId: splitFromOrderId,
@@ -6524,6 +7820,8 @@ typedef $$OrderLinesTableCreateCompanionBuilder =
       Value<double> taxPercentage,
       Value<String?> notes,
       Value<int> lineDiscountMinor,
+      Value<String?> addedBy,
+      Value<DateTime?> addedAt,
       Value<int> rowid,
     });
 typedef $$OrderLinesTableUpdateCompanionBuilder =
@@ -6537,6 +7835,8 @@ typedef $$OrderLinesTableUpdateCompanionBuilder =
       Value<double> taxPercentage,
       Value<String?> notes,
       Value<int> lineDiscountMinor,
+      Value<String?> addedBy,
+      Value<DateTime?> addedAt,
       Value<int> rowid,
     });
 
@@ -6608,6 +7908,16 @@ class $$OrderLinesTableFilterComposer
 
   ColumnFilters<int> get lineDiscountMinor => $composableBuilder(
     column: $table.lineDiscountMinor,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get addedBy => $composableBuilder(
+    column: $table.addedBy,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get addedAt => $composableBuilder(
+    column: $table.addedAt,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -6684,6 +7994,16 @@ class $$OrderLinesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get addedBy => $composableBuilder(
+    column: $table.addedBy,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get addedAt => $composableBuilder(
+    column: $table.addedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   $$OrdersTableOrderingComposer get orderId {
     final $$OrdersTableOrderingComposer composer = $composerBuilder(
       composer: this,
@@ -6747,6 +8067,12 @@ class $$OrderLinesTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get addedBy =>
+      $composableBuilder(column: $table.addedBy, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get addedAt =>
+      $composableBuilder(column: $table.addedAt, builder: (column) => column);
+
   $$OrdersTableAnnotationComposer get orderId {
     final $$OrdersTableAnnotationComposer composer = $composerBuilder(
       composer: this,
@@ -6808,6 +8134,8 @@ class $$OrderLinesTableTableManager
                 Value<double> taxPercentage = const Value.absent(),
                 Value<String?> notes = const Value.absent(),
                 Value<int> lineDiscountMinor = const Value.absent(),
+                Value<String?> addedBy = const Value.absent(),
+                Value<DateTime?> addedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => OrderLinesCompanion(
                 id: id,
@@ -6819,6 +8147,8 @@ class $$OrderLinesTableTableManager
                 taxPercentage: taxPercentage,
                 notes: notes,
                 lineDiscountMinor: lineDiscountMinor,
+                addedBy: addedBy,
+                addedAt: addedAt,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -6832,6 +8162,8 @@ class $$OrderLinesTableTableManager
                 Value<double> taxPercentage = const Value.absent(),
                 Value<String?> notes = const Value.absent(),
                 Value<int> lineDiscountMinor = const Value.absent(),
+                Value<String?> addedBy = const Value.absent(),
+                Value<DateTime?> addedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => OrderLinesCompanion.insert(
                 id: id,
@@ -6843,6 +8175,8 @@ class $$OrderLinesTableTableManager
                 taxPercentage: taxPercentage,
                 notes: notes,
                 lineDiscountMinor: lineDiscountMinor,
+                addedBy: addedBy,
+                addedAt: addedAt,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
@@ -6919,6 +8253,7 @@ typedef $$PaymentsTableCreateCompanionBuilder =
       required String method,
       required int amountMinor,
       Value<DateTime> takenAt,
+      Value<String?> cashBreakdown,
       Value<int> rowid,
     });
 typedef $$PaymentsTableUpdateCompanionBuilder =
@@ -6928,6 +8263,7 @@ typedef $$PaymentsTableUpdateCompanionBuilder =
       Value<String> method,
       Value<int> amountMinor,
       Value<DateTime> takenAt,
+      Value<String?> cashBreakdown,
       Value<int> rowid,
     });
 
@@ -6979,6 +8315,11 @@ class $$PaymentsTableFilterComposer
 
   ColumnFilters<DateTime> get takenAt => $composableBuilder(
     column: $table.takenAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get cashBreakdown => $composableBuilder(
+    column: $table.cashBreakdown,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -7035,6 +8376,11 @@ class $$PaymentsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get cashBreakdown => $composableBuilder(
+    column: $table.cashBreakdown,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   $$OrdersTableOrderingComposer get orderId {
     final $$OrdersTableOrderingComposer composer = $composerBuilder(
       composer: this,
@@ -7081,6 +8427,11 @@ class $$PaymentsTableAnnotationComposer
 
   GeneratedColumn<DateTime> get takenAt =>
       $composableBuilder(column: $table.takenAt, builder: (column) => column);
+
+  GeneratedColumn<String> get cashBreakdown => $composableBuilder(
+    column: $table.cashBreakdown,
+    builder: (column) => column,
+  );
 
   $$OrdersTableAnnotationComposer get orderId {
     final $$OrdersTableAnnotationComposer composer = $composerBuilder(
@@ -7139,6 +8490,7 @@ class $$PaymentsTableTableManager
                 Value<String> method = const Value.absent(),
                 Value<int> amountMinor = const Value.absent(),
                 Value<DateTime> takenAt = const Value.absent(),
+                Value<String?> cashBreakdown = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => PaymentsCompanion(
                 id: id,
@@ -7146,6 +8498,7 @@ class $$PaymentsTableTableManager
                 method: method,
                 amountMinor: amountMinor,
                 takenAt: takenAt,
+                cashBreakdown: cashBreakdown,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -7155,6 +8508,7 @@ class $$PaymentsTableTableManager
                 required String method,
                 required int amountMinor,
                 Value<DateTime> takenAt = const Value.absent(),
+                Value<String?> cashBreakdown = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => PaymentsCompanion.insert(
                 id: id,
@@ -7162,6 +8516,7 @@ class $$PaymentsTableTableManager
                 method: method,
                 amountMinor: amountMinor,
                 takenAt: takenAt,
+                cashBreakdown: cashBreakdown,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
@@ -8852,6 +10207,561 @@ typedef $$MixMatchProductsTableProcessedTableManager =
       MixMatchProduct,
       PrefetchHooks Function()
     >;
+typedef $$DepartmentsTableCreateCompanionBuilder =
+    DepartmentsCompanion Function({
+      required String name,
+      Value<String?> emoji,
+      Value<String?> imageUrl,
+      Value<String?> buttonColor,
+      Value<int> sortOrder,
+      Value<int> rowid,
+    });
+typedef $$DepartmentsTableUpdateCompanionBuilder =
+    DepartmentsCompanion Function({
+      Value<String> name,
+      Value<String?> emoji,
+      Value<String?> imageUrl,
+      Value<String?> buttonColor,
+      Value<int> sortOrder,
+      Value<int> rowid,
+    });
+
+class $$DepartmentsTableFilterComposer
+    extends Composer<_$AppDatabase, $DepartmentsTable> {
+  $$DepartmentsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get emoji => $composableBuilder(
+    column: $table.emoji,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get imageUrl => $composableBuilder(
+    column: $table.imageUrl,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get buttonColor => $composableBuilder(
+    column: $table.buttonColor,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get sortOrder => $composableBuilder(
+    column: $table.sortOrder,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$DepartmentsTableOrderingComposer
+    extends Composer<_$AppDatabase, $DepartmentsTable> {
+  $$DepartmentsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get emoji => $composableBuilder(
+    column: $table.emoji,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get imageUrl => $composableBuilder(
+    column: $table.imageUrl,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get buttonColor => $composableBuilder(
+    column: $table.buttonColor,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get sortOrder => $composableBuilder(
+    column: $table.sortOrder,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$DepartmentsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $DepartmentsTable> {
+  $$DepartmentsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get name =>
+      $composableBuilder(column: $table.name, builder: (column) => column);
+
+  GeneratedColumn<String> get emoji =>
+      $composableBuilder(column: $table.emoji, builder: (column) => column);
+
+  GeneratedColumn<String> get imageUrl =>
+      $composableBuilder(column: $table.imageUrl, builder: (column) => column);
+
+  GeneratedColumn<String> get buttonColor => $composableBuilder(
+    column: $table.buttonColor,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get sortOrder =>
+      $composableBuilder(column: $table.sortOrder, builder: (column) => column);
+}
+
+class $$DepartmentsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $DepartmentsTable,
+          Department,
+          $$DepartmentsTableFilterComposer,
+          $$DepartmentsTableOrderingComposer,
+          $$DepartmentsTableAnnotationComposer,
+          $$DepartmentsTableCreateCompanionBuilder,
+          $$DepartmentsTableUpdateCompanionBuilder,
+          (
+            Department,
+            BaseReferences<_$AppDatabase, $DepartmentsTable, Department>,
+          ),
+          Department,
+          PrefetchHooks Function()
+        > {
+  $$DepartmentsTableTableManager(_$AppDatabase db, $DepartmentsTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$DepartmentsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$DepartmentsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$DepartmentsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> name = const Value.absent(),
+                Value<String?> emoji = const Value.absent(),
+                Value<String?> imageUrl = const Value.absent(),
+                Value<String?> buttonColor = const Value.absent(),
+                Value<int> sortOrder = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => DepartmentsCompanion(
+                name: name,
+                emoji: emoji,
+                imageUrl: imageUrl,
+                buttonColor: buttonColor,
+                sortOrder: sortOrder,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String name,
+                Value<String?> emoji = const Value.absent(),
+                Value<String?> imageUrl = const Value.absent(),
+                Value<String?> buttonColor = const Value.absent(),
+                Value<int> sortOrder = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => DepartmentsCompanion.insert(
+                name: name,
+                emoji: emoji,
+                imageUrl: imageUrl,
+                buttonColor: buttonColor,
+                sortOrder: sortOrder,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$DepartmentsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $DepartmentsTable,
+      Department,
+      $$DepartmentsTableFilterComposer,
+      $$DepartmentsTableOrderingComposer,
+      $$DepartmentsTableAnnotationComposer,
+      $$DepartmentsTableCreateCompanionBuilder,
+      $$DepartmentsTableUpdateCompanionBuilder,
+      (
+        Department,
+        BaseReferences<_$AppDatabase, $DepartmentsTable, Department>,
+      ),
+      Department,
+      PrefetchHooks Function()
+    >;
+typedef $$CashDenominationsTableCreateCompanionBuilder =
+    CashDenominationsCompanion Function({
+      Value<int> valueMinor,
+      required String label,
+      Value<String?> imageUrl,
+      Value<int> sortOrder,
+    });
+typedef $$CashDenominationsTableUpdateCompanionBuilder =
+    CashDenominationsCompanion Function({
+      Value<int> valueMinor,
+      Value<String> label,
+      Value<String?> imageUrl,
+      Value<int> sortOrder,
+    });
+
+class $$CashDenominationsTableFilterComposer
+    extends Composer<_$AppDatabase, $CashDenominationsTable> {
+  $$CashDenominationsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get valueMinor => $composableBuilder(
+    column: $table.valueMinor,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get label => $composableBuilder(
+    column: $table.label,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get imageUrl => $composableBuilder(
+    column: $table.imageUrl,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get sortOrder => $composableBuilder(
+    column: $table.sortOrder,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$CashDenominationsTableOrderingComposer
+    extends Composer<_$AppDatabase, $CashDenominationsTable> {
+  $$CashDenominationsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get valueMinor => $composableBuilder(
+    column: $table.valueMinor,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get label => $composableBuilder(
+    column: $table.label,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get imageUrl => $composableBuilder(
+    column: $table.imageUrl,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get sortOrder => $composableBuilder(
+    column: $table.sortOrder,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$CashDenominationsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $CashDenominationsTable> {
+  $$CashDenominationsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get valueMinor => $composableBuilder(
+    column: $table.valueMinor,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get label =>
+      $composableBuilder(column: $table.label, builder: (column) => column);
+
+  GeneratedColumn<String> get imageUrl =>
+      $composableBuilder(column: $table.imageUrl, builder: (column) => column);
+
+  GeneratedColumn<int> get sortOrder =>
+      $composableBuilder(column: $table.sortOrder, builder: (column) => column);
+}
+
+class $$CashDenominationsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $CashDenominationsTable,
+          CashDenomination,
+          $$CashDenominationsTableFilterComposer,
+          $$CashDenominationsTableOrderingComposer,
+          $$CashDenominationsTableAnnotationComposer,
+          $$CashDenominationsTableCreateCompanionBuilder,
+          $$CashDenominationsTableUpdateCompanionBuilder,
+          (
+            CashDenomination,
+            BaseReferences<
+              _$AppDatabase,
+              $CashDenominationsTable,
+              CashDenomination
+            >,
+          ),
+          CashDenomination,
+          PrefetchHooks Function()
+        > {
+  $$CashDenominationsTableTableManager(
+    _$AppDatabase db,
+    $CashDenominationsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$CashDenominationsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$CashDenominationsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$CashDenominationsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> valueMinor = const Value.absent(),
+                Value<String> label = const Value.absent(),
+                Value<String?> imageUrl = const Value.absent(),
+                Value<int> sortOrder = const Value.absent(),
+              }) => CashDenominationsCompanion(
+                valueMinor: valueMinor,
+                label: label,
+                imageUrl: imageUrl,
+                sortOrder: sortOrder,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> valueMinor = const Value.absent(),
+                required String label,
+                Value<String?> imageUrl = const Value.absent(),
+                Value<int> sortOrder = const Value.absent(),
+              }) => CashDenominationsCompanion.insert(
+                valueMinor: valueMinor,
+                label: label,
+                imageUrl: imageUrl,
+                sortOrder: sortOrder,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$CashDenominationsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $CashDenominationsTable,
+      CashDenomination,
+      $$CashDenominationsTableFilterComposer,
+      $$CashDenominationsTableOrderingComposer,
+      $$CashDenominationsTableAnnotationComposer,
+      $$CashDenominationsTableCreateCompanionBuilder,
+      $$CashDenominationsTableUpdateCompanionBuilder,
+      (
+        CashDenomination,
+        BaseReferences<
+          _$AppDatabase,
+          $CashDenominationsTable,
+          CashDenomination
+        >,
+      ),
+      CashDenomination,
+      PrefetchHooks Function()
+    >;
+typedef $$StaffTableCreateCompanionBuilder =
+    StaffCompanion Function({
+      Value<int> id,
+      Value<int> pluid,
+      required String name,
+      required String pin,
+    });
+typedef $$StaffTableUpdateCompanionBuilder =
+    StaffCompanion Function({
+      Value<int> id,
+      Value<int> pluid,
+      Value<String> name,
+      Value<String> pin,
+    });
+
+class $$StaffTableFilterComposer extends Composer<_$AppDatabase, $StaffTable> {
+  $$StaffTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get pluid => $composableBuilder(
+    column: $table.pluid,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get pin => $composableBuilder(
+    column: $table.pin,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$StaffTableOrderingComposer
+    extends Composer<_$AppDatabase, $StaffTable> {
+  $$StaffTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get pluid => $composableBuilder(
+    column: $table.pluid,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get pin => $composableBuilder(
+    column: $table.pin,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$StaffTableAnnotationComposer
+    extends Composer<_$AppDatabase, $StaffTable> {
+  $$StaffTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get pluid =>
+      $composableBuilder(column: $table.pluid, builder: (column) => column);
+
+  GeneratedColumn<String> get name =>
+      $composableBuilder(column: $table.name, builder: (column) => column);
+
+  GeneratedColumn<String> get pin =>
+      $composableBuilder(column: $table.pin, builder: (column) => column);
+}
+
+class $$StaffTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $StaffTable,
+          StaffData,
+          $$StaffTableFilterComposer,
+          $$StaffTableOrderingComposer,
+          $$StaffTableAnnotationComposer,
+          $$StaffTableCreateCompanionBuilder,
+          $$StaffTableUpdateCompanionBuilder,
+          (StaffData, BaseReferences<_$AppDatabase, $StaffTable, StaffData>),
+          StaffData,
+          PrefetchHooks Function()
+        > {
+  $$StaffTableTableManager(_$AppDatabase db, $StaffTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$StaffTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$StaffTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$StaffTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int> pluid = const Value.absent(),
+                Value<String> name = const Value.absent(),
+                Value<String> pin = const Value.absent(),
+              }) => StaffCompanion(id: id, pluid: pluid, name: name, pin: pin),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int> pluid = const Value.absent(),
+                required String name,
+                required String pin,
+              }) => StaffCompanion.insert(
+                id: id,
+                pluid: pluid,
+                name: name,
+                pin: pin,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$StaffTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $StaffTable,
+      StaffData,
+      $$StaffTableFilterComposer,
+      $$StaffTableOrderingComposer,
+      $$StaffTableAnnotationComposer,
+      $$StaffTableCreateCompanionBuilder,
+      $$StaffTableUpdateCompanionBuilder,
+      (StaffData, BaseReferences<_$AppDatabase, $StaffTable, StaffData>),
+      StaffData,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -8878,4 +10788,10 @@ class $AppDatabaseManager {
       $$MixMatchDealsTableTableManager(_db, _db.mixMatchDeals);
   $$MixMatchProductsTableTableManager get mixMatchProducts =>
       $$MixMatchProductsTableTableManager(_db, _db.mixMatchProducts);
+  $$DepartmentsTableTableManager get departments =>
+      $$DepartmentsTableTableManager(_db, _db.departments);
+  $$CashDenominationsTableTableManager get cashDenominations =>
+      $$CashDenominationsTableTableManager(_db, _db.cashDenominations);
+  $$StaffTableTableManager get staff =>
+      $$StaffTableTableManager(_db, _db.staff);
 }

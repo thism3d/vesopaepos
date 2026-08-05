@@ -33,15 +33,38 @@ final voidReasonsProvider = FutureProvider<List<String>>((ref) async {
 /// Confirms a void and captures why. Returns the chosen reason, or null if
 /// cancelled. A void with no reason is not allowed — that is the whole point of
 /// the audit trail.
-Future<String?> showVoidDialog(BuildContext context, WidgetRef ref) {
+///
+/// Two shapes, because they are very different acts: [wholeCheck] cancels the
+/// entire sale, while the default removes the picked lines. The dialog says
+/// which, and names the items, so a clerk cannot clear a table's whole bill
+/// while believing they are dropping one coffee.
+Future<String?> showVoidDialog(
+  BuildContext context,
+  WidgetRef ref, {
+  bool wholeCheck = false,
+  int itemCount = 0,
+  String itemSummary = '',
+}) {
   return showDialog<String>(
     context: context,
-    builder: (_) => const _VoidDialog(),
+    builder: (_) => _VoidDialog(
+      wholeCheck: wholeCheck,
+      itemCount: itemCount,
+      itemSummary: itemSummary,
+    ),
   );
 }
 
 class _VoidDialog extends ConsumerStatefulWidget {
-  const _VoidDialog();
+  const _VoidDialog({
+    required this.wholeCheck,
+    required this.itemCount,
+    required this.itemSummary,
+  });
+
+  final bool wholeCheck;
+  final int itemCount;
+  final String itemSummary;
 
   @override
   ConsumerState<_VoidDialog> createState() => _VoidDialogState();
@@ -62,12 +85,22 @@ class _VoidDialogState extends ConsumerState<_VoidDialog> {
     final reasons = ref.watch(voidReasonsProvider).value ?? const [];
     final isCustom = _selected == '__custom__';
 
+    final whole = widget.wholeCheck;
+
     return AlertDialog(
-      title: const Row(
+      title: Row(
         children: [
-          Icon(Icons.block, color: Pos.red),
-          SizedBox(width: 12),
-          Text('Void this sale?'),
+          Icon(whole ? Icons.block : Icons.backspace_outlined, color: Pos.red),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              whole
+                  ? 'Cancel the whole check?'
+                  : widget.itemCount == 1
+                      ? 'Void this item?'
+                      : 'Void ${widget.itemCount} items?',
+            ),
+          ),
         ],
       ),
       // Scrollable so that when "Other reason…" pulls up the on-screen
@@ -80,10 +113,35 @@ class _VoidDialogState extends ConsumerState<_VoidDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'This clears the whole bill. Choose a reason — it is recorded '
-                'against the terminal.',
+                whole
+                    ? 'This clears every item on the bill. Choose a reason — it '
+                        'is recorded against the terminal.'
+                    : 'The rest of the bill stays as it is. Choose a reason — '
+                        'it is recorded against the terminal.',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
+              // Name what is going. "Void 3 items" with no list is how the
+              // wrong three get voided.
+              if (!whole && widget.itemSummary.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    widget.itemSummary,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               for (final reason in reasons)
                 RadioListTile<String>(
@@ -128,9 +186,12 @@ class _VoidDialogState extends ConsumerState<_VoidDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          style: FilledButton.styleFrom(backgroundColor: Pos.red),
+          style: FilledButton.styleFrom(
+            backgroundColor: Pos.red,
+            foregroundColor: Colors.white,
+          ),
           onPressed: _canConfirm ? _confirm : null,
-          child: const Text('Void'),
+          child: Text(whole ? 'Cancel check' : 'Void'),
         ),
       ],
     );

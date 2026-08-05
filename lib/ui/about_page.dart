@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../config/constants.dart';
+import 'theme.dart';
+import 'widgets/pos_message.dart';
 
 /// One way to reach Vesopa.
 class _Contact {
@@ -87,23 +89,20 @@ class AboutPage extends StatelessWidget {
   ];
 
   Future<void> _open(BuildContext context, _Contact contact) async {
-    final messenger = ScaffoldMessenger.of(context);
     try {
       final ok = await launchUrl(
         Uri.parse(contact.uri),
         mode: LaunchMode.externalApplication,
       );
-      if (!ok) {
-        messenger.showSnackBar(
-          SnackBar(content: Text('${contact.label}: ${contact.value}')),
-        );
+      if (!ok && context.mounted) {
+        PosMessenger.info(context, '${contact.label}: ${contact.value}');
       }
     } catch (_) {
       // A till with no dialler or no browser must not crash on a tap; show the
       // detail instead so the clerk can still act on it.
-      messenger.showSnackBar(
-        SnackBar(content: Text('${contact.label}: ${contact.value}')),
-      );
+      if (context.mounted) {
+        PosMessenger.info(context, '${contact.label}: ${contact.value}');
+      }
     }
   }
 
@@ -239,7 +238,11 @@ class _Hero extends StatelessWidget {
               borderRadius: BorderRadius.circular(14),
             ),
             child: Image.asset(
-              'assets/brand/vesopa_logo.png',
+              // The wordmark is near-black, so it disappears on the dark
+              // theme's surface unless the on-dark lockup is used instead.
+              theme.isDark
+                  ? 'assets/brand/vesopa_logo_on_dark.png'
+                  : 'assets/brand/vesopa_logo.png',
               fit: BoxFit.contain,
               errorBuilder: (_, _, _) => Center(
                 child: Text(

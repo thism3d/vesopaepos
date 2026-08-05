@@ -12,6 +12,7 @@ class Session {
     this.office,
     this.officeName,
     this.token,
+    this.terminalToken,
   });
 
   final String? email;
@@ -30,7 +31,21 @@ class Session {
 
   final String? token;
 
+  /// The terminal's own long-lived credential, issued once at commissioning.
+  ///
+  /// Separate from [token], which is a *person's* twelve-hour session and is
+  /// useless a day later. This one is what lets the till read its venue's staff
+  /// list so a PIN can be checked with no network — see StaffRepository.
+  ///
+  /// Null on a terminal commissioned before v1.3.1.0. Staff sign-on asks such a
+  /// till to be signed in again rather than pretending to work.
+  final String? terminalToken;
+
   bool get signedIn => token != null && office != null;
+
+  /// Whether this terminal can pull its staff list. False on a till whose
+  /// session predates the terminal token.
+  bool get commissioned => terminalToken != null;
 
   /// What to print above a receipt. Falls back to the product name rather than
   /// to [office]: a till that has not been told its trading name should say
@@ -46,6 +61,7 @@ class Session {
         'office': office,
         'officeName': officeName,
         'token': token,
+        'terminalToken': terminalToken,
       };
 
   factory Session.fromJson(Map<String, dynamic> json) => Session(
@@ -54,6 +70,7 @@ class Session {
         office: json['office'] as String?,
         officeName: json['officeName'] as String?,
         token: json['token'] as String?,
+        terminalToken: json['terminalToken'] as String?,
       );
 }
 
@@ -102,7 +119,14 @@ class SessionController extends AsyncNotifier<Session> {
           .post(
             Uri.parse('$apiBase/api/login'),
             headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'email': email, 'password': password}),
+            body: jsonEncode({
+              'email': email,
+              'password': password,
+              // Ask for the terminal's own credential as well as this person's
+              // session. It is what staff PIN sign-on reads the staff list
+              // with, long after the session token below has expired.
+              'terminal': true,
+            }),
           )
           .timeout(const Duration(seconds: 15));
     } catch (e) {
@@ -138,6 +162,9 @@ class SessionController extends AsyncNotifier<Session> {
       // is why receipts printed the office email as the venue's name.
       officeName: user['officeName'] as String?,
       token: body['token'] as String?,
+      // Absent if this server predates v1.3.1.0. Everything except staff
+      // sign-on works without it, so a missing token is not a failed sign-in.
+      terminalToken: body['terminalToken'] as String?,
     );
 
     final prefs = await SharedPreferences.getInstance();

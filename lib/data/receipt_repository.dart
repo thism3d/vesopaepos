@@ -110,13 +110,24 @@ class ReceiptLine {
 }
 
 class ReceiptTender {
-  const ReceiptTender({required this.method, required this.amountMinor});
+  const ReceiptTender({
+    required this.method,
+    required this.amountMinor,
+    this.cashBreakdown,
+  });
+
   final String method;
   final int amountMinor;
+
+  /// The notes counted in on the cash keys, as `2000x2,500x1`. Printed under
+  /// the tender so the customer can check the receipt against what they
+  /// actually handed over. Null for card, and for cash keyed as an amount.
+  final String? cashBreakdown;
 
   factory ReceiptTender.fromJson(Map<String, dynamic> j) => ReceiptTender(
         method: j['method'] as String? ?? '',
         amountMinor: j['amount_minor'] as int? ?? 0,
+        cashBreakdown: j['cash_breakdown'] as String?,
       );
 }
 

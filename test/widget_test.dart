@@ -11,7 +11,22 @@ void main() {
   testWidgets('ringing up a product shows it in the basket with a total',
       (tester) async {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
-    addTearDown(db.close);
+
+    // The tree has to come down *before* the database does.
+    //
+    // `addTearDown(db.close)` on its own hung this test for ten minutes: tear-
+    // downs run last-registered-first, so the database closed while the sale
+    // screen's StreamBuilders were still subscribed. Cancelling a drift stream
+    // on a closed database schedules a zero-duration timer (StreamQueryStore.
+    // markAsClosed) that the test's fake clock never runs, and flutter_test
+    // waits out its full timeout on the pending timer.
+    //
+    // Pumping an empty widget unmounts the subscribers first, so the streams are
+    // already cancelled by the time the database goes.
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await db.close();
+    });
 
     await db.into(db.products).insert(
           ProductsCompanion.insert(

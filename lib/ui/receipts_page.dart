@@ -279,7 +279,7 @@ class _Chip extends StatelessWidget {
       onSelected: (_) => onTap(),
       selectedColor: Pos.brand,
       labelStyle: TextStyle(
-        color: selected ? Colors.white : null,
+        color: selected ? Pos.onBrand : null,
       ),
     );
   }

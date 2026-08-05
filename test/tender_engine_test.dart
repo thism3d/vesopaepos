@@ -30,6 +30,7 @@ TenderEntry card(int minor, {String mode = 'terminal'}) =>
     TenderEntry(kind: TenderKind.card, amountMinor: minor, entryMode: mode);
 
 void main() {
+  splitBillRegression();
   group('partial payment', () {
     test('a part payment leaves the rest outstanding', () {
       final s = stateFor(8000).addTender(card(3000));
@@ -234,6 +235,85 @@ void main() {
       final s = TenderState(totals: totals);
       expect(totals.gratuityMinor, 1000);
       expect(s.outstandingMinor, 9000);
+    });
+  });
+}
+
+/// Regression cover for the reported "split bill takes the first share then the
+/// rest of the check disappears".
+///
+/// The cause was in the tables screen, not here: it created N line-less orders
+/// and voided the one holding every item. That path is gone and the tables
+/// screen now drives this engine instead, so these are the guarantees the
+/// replacement rests on — the bill stays whole, and paying one share never
+/// costs the others.
+void splitBillRegression() {
+  group('splitting a bill across several payers', () {
+    test('shares always add back up to the bill', () {
+      for (final ways in [2, 3, 4, 5, 6, 8]) {
+        // 4001p deliberately does not divide by any of these.
+        final split = stateFor(4001).splitEqually(ways);
+        final summed =
+            split.shares.fold<int>(0, (sum, s) => sum + s.amountMinor);
+
+        expect(split.shares.length, ways);
+        expect(summed, 4001, reason: '$ways ways must still total the bill');
+      }
+    });
+
+    test('paying the first share leaves the rest of the check intact', () {
+      final split = stateFor(2000).splitEqually(4);
+      final afterFirst = split.addTender(cash(500));
+
+      // The bill itself is untouched...
+      expect(afterFirst.totals.totalMinor, 2000);
+      // ...three shares are still owed...
+      expect(afterFirst.shares.where((s) => !s.settled).length, 3);
+      expect(afterFirst.outstandingMinor, 1500);
+      // ...and the till has moved on to the next person.
+      expect(afterFirst.activeShare, 1);
+      expect(afterFirst.dueNowMinor, 500);
+      // The sale is emphatically not finished.
+      expect(afterFirst.settled, isFalse);
+    });
+
+    test('every share paid settles the bill exactly once', () {
+      var state = stateFor(2000).splitEqually(4);
+      for (var i = 0; i < 4; i++) {
+        expect(state.settled, isFalse, reason: 'settled early at share $i');
+        state = state.addTender(cash(state.dueNowMinor));
+      }
+
+      expect(state.settled, isTrue);
+      expect(state.outstandingMinor, 0);
+      expect(state.changeMinor, 0);
+      expect(state.shares.every((s) => s.settled), isTrue);
+    });
+
+    test('overpaying one share in cash is change, not a loss to the others', () {
+      // £20 four ways; the first person hands over a £10 note for their £5.
+      final state = stateFor(2000).splitEqually(4).addTender(cash(1000));
+
+      expect(state.outstandingMinor, 1000);
+      // The remaining three shares are still £5 each and still owed.
+      expect(state.shares.skip(1).every((s) => s.outstandingMinor == 500), isTrue);
+      expect(state.dueNowMinor, 500);
+    });
+
+    test('abandoning a split leaves the whole bill payable', () {
+      final state = stateFor(2000).splitEqually(4).clearSplit();
+
+      expect(state.isSplit, isFalse);
+      expect(state.shares, isEmpty);
+      expect(state.dueNowMinor, 2000);
+    });
+
+    test('a split of fewer than two ways is simply not a split', () {
+      for (final ways in [0, 1]) {
+        final state = stateFor(2000).splitEqually(ways);
+        expect(state.isSplit, isFalse);
+        expect(state.dueNowMinor, 2000);
+      }
     });
   });
 }
