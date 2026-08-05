@@ -74,3 +74,13 @@ keys/
 google-services.json
 GoogleService-Info.plist
 *service-account*.json
+
+# -----------------------------------------------------------------------------
+# Windows desktop build output
+# -----------------------------------------------------------------------------
+# CMake caches, Visual Studio workspace state and compiled objects. Regenerated
+# by every build, and `cmake.db` and `CMakeCache.txt` carry absolute paths from
+# whichever machine last compiled — so they conflict on every pull for no gain.
+windows/runner/out/
+windows/runner/.vs/
+windows/flutter/ephemeral/
