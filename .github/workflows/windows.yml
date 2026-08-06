@@ -26,6 +26,13 @@ jobs:
   build:
     runs-on: windows-latest
 
+    # Only the release step needs more than read access, but the token is
+    # granted per job. Without this the default token is read-only on repos
+    # created since 2023 and "Attach to release" fails with a 403 — which is
+    # invisible until the first tag is actually pushed.
+    permissions:
+      contents: write
+
     steps:
       - uses: actions/checkout@v4
 
