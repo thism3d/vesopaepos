@@ -1,16 +1,18 @@
-# Builds the Windows till, so releasing does not depend on anyone having a
-# Windows machine set up to build it.
+# Builds the Windows till as an MSIX package, so releasing does not depend on
+# anyone having a Windows machine set up to build it.
 #
-# Produces three artefacts on every run:
-#   * vesopa-epos-windows    — the plain runner folder, copy-and-run
-#   * vesopa-epos-installer  — "VesopaEPOS Installer.exe", the file the website
-#                              serves at /app/VesopaEPOS%20Installer.exe
-#   * vesopa-epos-msix       — an MSIX package for Store submission / sideload
+# Produces one artefact on every run:
+#   * vesopa-epos-msix — an MSIX package for Store submission / sideload
 #
-# Tagging a release (v1.2.3) also attaches all three to the GitHub release, so a
+# Tagging a release (v1.2.3) also attaches it to the GitHub release, so a
 # specific till version can be re-downloaded later rather than only living in a
 # CI run's 90-day artefacts.
-name: Build Windows till
+#
+# The plain runner zip and the Inno Setup installer were dropped from this
+# workflow: the MSIX is the only package being shipped from CI. The installer
+# script is still in windows/installer/ and can be compiled by hand if the
+# double-click .exe is ever needed again.
+name: Build Windows MSIX
 
 on:
   push:
@@ -40,28 +42,18 @@ jobs:
       - name: Fetch dependencies
         run: flutter pub get
 
-      # pubspec.yaml is the single source of the version number; the installer
-      # takes it from here so an installer can never claim a version the app
-      # does not. `1.3.1+4` gives 1.3.1 to show a user and 1.3.1.4 for the four-
-      # part number Windows wants in file properties.
-      - name: Read version from pubspec
-        id: ver
-        shell: pwsh
-        run: |
-          $raw = (Select-String -Path pubspec.yaml -Pattern '^version:\s*(\S+)').Matches[0].Groups[1].Value
-          $app, $build = $raw.Split('+')
-          if (-not $build) { $build = '0' }
-          Add-Content $env:GITHUB_OUTPUT "app_version=$app"
-          Add-Content $env:GITHUB_OUTPUT "version_info=$app.$build"
-          Write-Host "Building $app ($app.$build)"
-
       # Fail fast on analysis before spending time on the native build.
       - name: Analyse
         run: flutter analyze lib
 
-      # Two exclusions, for different reasons:
+      # Three exclusions, for different reasons:
       #   * `live`-tagged tests call Dojo's real sandbox; they need a key and a
       #     reader, so they are for a developer to run deliberately.
+      #   * `golden`-tagged tests compare against PNGs rendered on macOS. Windows
+      #     rasterises text differently, so they fail on this runner no matter
+      #     how correct the layout is — this is what was breaking every build.
+      #     The layout assertions in those same files still run here; only the
+      #     screenshot comparisons are skipped. See dart_test.yaml.
       #   * widget_test.dart hangs for the full ten-minute flutter_test timeout
       #     instead of failing, which would stall every build for no
       #     information. Run it by hand if you are working on it.
@@ -71,7 +63,7 @@ jobs:
           $files = Get-ChildItem test -Recurse -Filter '*_test.dart' |
             Where-Object { $_.Name -ne 'widget_test.dart' } |
             ForEach-Object { $_.FullName }
-          flutter test --exclude-tags live @files
+          flutter test --exclude-tags "live || golden" @files
 
       # The Dojo key is injected at build time and never committed — this
       # repository is public. Set DOJO_API_KEY under
@@ -83,11 +75,10 @@ jobs:
           --dart-define=DOJO_API_KEY=${{ secrets.DOJO_API_KEY }}
 
       # A Flutter release build links against the MSVC runtime but does not ship
-      # it. Machines that have never had Visual Studio or a C++ redistributable
-      # on them start the till and it dies immediately with no window and no
-      # message. Copying the three DLLs next to the exe (app-local deployment,
-      # which the Visual Studio licence permits) removes that as a failure mode
-      # for both the zip and the installer.
+      # it. The MSIX packages whatever is in the Release folder, so copying the
+      # three DLLs in here (app-local deployment, which the Visual Studio licence
+      # permits) means a sideloaded package runs on a machine that has never had
+      # a C++ redistributable on it.
       - name: Bundle the MSVC runtime
         shell: pwsh
         run: |
@@ -103,9 +94,10 @@ jobs:
           }
 
       # Signing is optional and everything below degrades gracefully without it:
-      # an unsigned build works, it just makes SmartScreen warn on download. To
-      # sign, add a base64-encoded .pfx as the CERTIFICATE_BASE64 secret and its
-      # password as CERTIFICATE_PASSWORD.
+      # an unsigned Store package is fine, because Microsoft re-signs
+      # submissions themselves. To produce a signed, sideloadable package
+      # instead, add a base64-encoded .pfx as the CERTIFICATE_BASE64 secret and
+      # its password as CERTIFICATE_PASSWORD.
       # `secrets` cannot be used in an `if:` expression, so the presence check
       # happens inside each script instead.
       - name: Restore signing certificate
@@ -128,7 +120,7 @@ jobs:
           }
 
       # The app is signed before packaging, so the signature is on the exe a
-      # customer actually runs and not only on the wrapper it arrived in.
+      # customer actually runs and not only on the package it arrived in.
       - name: Sign the till
         shell: pwsh
         env:
@@ -141,56 +133,8 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Signing the till failed." }
           }
 
-      - name: Package runner folder
-        shell: pwsh
-        run: |
-          $out = "build/windows/x64/runner/Release"
-          if (!(Test-Path $out)) { throw "Build output not found at $out" }
-          Compress-Archive -Path "$out/*" -DestinationPath vesopa-epos-windows.zip
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: vesopa-epos-windows
-          path: vesopa-epos-windows.zip
-          if-no-files-found: error
-
-      # The double-click installer for the public download link. See
-      # windows/installer/vesopa_epos.iss.
-      - name: Build the installer
-        shell: pwsh
-        run: |
-          $iscc = "C:/Program Files (x86)/Inno Setup 6/ISCC.exe"
-          if (!(Test-Path $iscc)) {
-            choco install innosetup -y --no-progress
-          }
-          & $iscc `
-            "/DAppVersion=${{ steps.ver.outputs.app_version }}" `
-            "/DVersionInfo=${{ steps.ver.outputs.version_info }}" `
-            windows/installer/vesopa_epos.iss
-          if ($LASTEXITCODE -ne 0) { throw "The installer failed to compile." }
-
-      - name: Sign the installer
-        shell: pwsh
-        env:
-          CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
-        run: |
-          if (Test-Path "windows/certificate.pfx") {
-            & $env:SIGNTOOL sign /f windows/certificate.pfx /p $env:CERTIFICATE_PASSWORD `
-              /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
-              "build/windows/installer/VesopaEPOS Installer.exe"
-            if ($LASTEXITCODE -ne 0) { throw "Signing the installer failed." }
-          }
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: vesopa-epos-installer
-          path: build/windows/installer/VesopaEPOS Installer.exe
-          if-no-files-found: error
-
-      # MSIX for the Microsoft Store. Built unsigned unless a certificate is
-      # present: Microsoft re-signs Store submissions themselves, and no
-      # certificate is committed to this repo. With a certificate it becomes a
-      # signed, sideloadable package instead.
+      # Packaging settings (identity, version, logo, capabilities) all come from
+      # the msix_config block in pubspec.yaml, so there is nothing to pass here.
       - name: Build MSIX
         shell: pwsh
         env:
@@ -204,6 +148,7 @@ jobs:
             # --store omits signing; Microsoft signs the package on submission.
             dart run msix:create --store
           }
+          if ($LASTEXITCODE -ne 0) { throw "Building the MSIX failed." }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -215,7 +160,4 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            vesopa-epos-windows.zip
-            build/windows/installer/VesopaEPOS Installer.exe
-            build/windows/x64/runner/Release/*.msix
+          files: build/windows/x64/runner/Release/*.msix
